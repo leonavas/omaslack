@@ -36,6 +36,10 @@ Item {
   readonly property bool ringed: selected && !editing
   readonly property bool mentionsMe: !!msg && !!ws && Md.mentionsMe(msg, ws.me.id) && !mine
   readonly property bool flash: !!msg && !!ws && ws.flashTs === msg.ts
+  // A thread's parent deleted under its replies (Slack's tombstone): a trash
+  // can for a face, no header, "This message was deleted.", its reactions
+  // and replies, and only what still applies to it.
+  readonly property bool tombstone: !!msg && msg.tombstone === true
   readonly property int pad: app.compact ? t.sp(2) : t.sp(4)
   readonly property int sidePad: t.sp(20)
 
@@ -212,7 +216,7 @@ Item {
           // Photo, or the time of a grouped message on hover. An app's is
           // the picture its message set, else its own (Workspace.author).
           Avatar {
-            visible: !!m.row && m.row.header && !m.emojiFace
+            visible: !!m.row && m.row.header && !m.emojiFace && !m.tombstone
             app: m.app
             ws: m.ws
             user: m.msg ? m.msg.user : ""
@@ -224,13 +228,23 @@ Item {
           }
           // An app that posts with an emoji for a face (icon_emoji).
           EmojiIcon {
-            visible: !!m.row && m.row.header && m.emojiFace
+            visible: !!m.row && m.row.header && m.emojiFace && !m.tombstone
             app: m.app
             ws: m.ws
             name: m.emojiFace ? m.who.emoji : ""
             size: m.t.avatar
             y: m.t.sp(2)
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: m.showProfile() }
+          }
+          // Deleted (a tombstone): a trash can in the photo's rounded square.
+          Rectangle {
+            visible: m.tombstone
+            width: m.t.avatar
+            height: width
+            y: m.t.sp(2)
+            radius: Math.round(width * 0.22)
+            color: m.t.alpha(m.t.fg, 0.10)
+            Glyph { app: m.app; anchors.centerIn: parent; icon: "󰧧"; size: Math.round(parent.width * 0.56); color: m.t.fgDim }
           }
           Text {
             visible: !!m.row && !m.row.header && m.hovered
@@ -251,7 +265,7 @@ Item {
 
             // Name · status · APP · time
             Row {
-              visible: !!m.row && m.row.header
+              visible: !!m.row && m.row.header && !m.tombstone
               spacing: m.t.sp(6)
               Text {
                 id: nameText
@@ -314,10 +328,23 @@ Item {
               }
             }
 
+            // A tombstone's line, centered beside its trash can.
+            Text {
+              visible: m.tombstone
+              width: parent.width
+              height: m.t.avatar + m.t.sp(4)
+              verticalAlignment: Text.AlignVCenter
+              text: m.app.tr("This message was deleted.", "Esta mensagem foi excluída.")
+              color: m.t.fgDim
+              font.family: m.t.font
+              font.pixelSize: m.t.fsText
+              elide: Text.ElideRight
+            }
+
             // Body (or the edit box).
             MessageBody {
               id: bodyView
-              visible: !m.editing
+              visible: !m.editing && !m.tombstone
               width: parent.width
               app: m.app
               win: m.win
@@ -325,7 +352,7 @@ Item {
               conv: m.conv
               msg: m.msg
               parts: {
-                if (!m.msg || !m.ctx || m.editing) return []
+                if (!m.msg || !m.ctx || m.editing || m.tombstone) return []
                 var ps = Md.render(m.msg, m.ctx)
                 if (m.marks) ps = ps.map(function(p) { if (!p.html) return p; var c = U.copy(p); c.html = Md.highlight(p.html, m.marks.color, m.marks.bg); return c })
                 // "(edited)" follows the last line of text, as in Slack.
@@ -339,7 +366,7 @@ Item {
               opacity: m.msg && m.msg.pending ? 0.6 : 1
             }
             Text {
-              visible: !!m.msg && !!m.msg.edited && !m.editing && (bodyView.parts.length === 0 || bodyView.parts[bodyView.parts.length - 1].t !== "text")
+              visible: !!m.msg && !!m.msg.edited && !m.editing && !m.tombstone && (bodyView.parts.length === 0 || bodyView.parts[bodyView.parts.length - 1].t !== "text")
               text: m.app.tr("(edited)", "(editado)")
               color: m.t.fgDim
               font.family: m.t.font
@@ -429,9 +456,11 @@ Item {
           }
           Rectangle { width: 1; height: m.t.sp(20); color: m.t.line; anchors.verticalCenter: parent.verticalCenter }
           IconButton { id: reactBtn; app: m.app; size: m.t.sp(30); icon: "󰇵"; tip: m.app.tr("Add reaction", "Adicionar reação"); onClicked: m.pickReaction(reactBtn) }
-          IconButton { visible: !m.inThread; app: m.app; size: m.t.sp(30); icon: "󰍪"; tip: m.app.tr("Reply in thread", "Responder na conversa"); onClicked: m.ws.openThread(m.conv, m.msg.threadTs || m.msg.ts) }
-          IconButton { app: m.app; size: m.t.sp(30); icon: "󰒖"; tip: m.app.tr("Forward message", "Encaminhar mensagem"); onClicked: m.win.dialog("forward", { conv: m.conv, msg: m.msg }) }
+          // A tombstone keeps its reactions and the menu; its replies bar opens the thread.
+          IconButton { visible: !m.inThread && !m.tombstone; app: m.app; size: m.t.sp(30); icon: "󰍪"; tip: m.app.tr("Reply in thread", "Responder na conversa"); onClicked: m.ws.openThread(m.conv, m.msg.threadTs || m.msg.ts) }
+          IconButton { visible: !m.tombstone; app: m.app; size: m.t.sp(30); icon: "󰒖"; tip: m.app.tr("Forward message", "Encaminhar mensagem"); onClicked: m.win.dialog("forward", { conv: m.conv, msg: m.msg }) }
           IconButton {
+            visible: !m.tombstone
             app: m.app; size: m.t.sp(30)
             icon: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? "󰃀" : "󰃃"
             color: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? m.t.red : m.t.fgSoft
@@ -496,15 +525,24 @@ Item {
 
   function copyLink(w, conv, msg) { m.app.copy(w.permalink(conv, msg)); m.win.toast(m.app.tr("Link copied", "Link copiado")) }
 
+  // Notifications for the replies of the thread a message heads or is in.
+  function followItem(w, conv, msg) {
+    var parent = msg.threadTs && msg.threadTs !== msg.ts ? (w.findAny(conv, msg.threadTs) || msg) : msg
+    var on = !!parent.subscribed
+    return { label: on ? m.app.tr("Turn off notifications for replies", "Desativar notificações de respostas") : m.app.tr("Get notified about new replies", "Ativar notificações de respostas"),
+             icon: on ? "󰂛" : "󰂚", action: function() { w.setFollow(conv, parent, !on) } }
+  }
+
   // Slack's keys on a selected message (MessageList): E edit and Delete /
   // Backspace delete (yours only), R react, T or Enter the thread, A save,
-  // P pin, S or F forward, U mark unread, M remind, L copy link. True when
-  // the key is one of them.
+  // P pin, S or F forward, U mark unread, M remind, L copy link (a
+  // tombstone: only R, T or Enter and L). True when the key is one of them.
   function keyAction(key) {
     if (!m.msg || m.members) return false
     var keys = [Qt.Key_E, Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_R, Qt.Key_T, Qt.Key_Return, Qt.Key_Enter, Qt.Key_A, Qt.Key_P, Qt.Key_S, Qt.Key_F, Qt.Key_U, Qt.Key_M, Qt.Key_L]
     if (keys.indexOf(key) < 0) return false
     if (m.msg.pending || m.editing) return true
+    if (m.tombstone && [Qt.Key_A, Qt.Key_P, Qt.Key_S, Qt.Key_F, Qt.Key_U, Qt.Key_M].indexOf(key) >= 0) return true
     var w = m.ws, msg = m.msg, conv = m.conv
     switch (key) {
     case Qt.Key_E: if (m.mine) w.editing = { conv: conv, ts: msg.ts }; break
@@ -537,6 +575,14 @@ Item {
     var pinned = msg.pinnedTo && msg.pinnedTo.indexOf(conv) >= 0
     var items = [{ reactions: ["white_check_mark", "eyes", "raised_hands", "+1", "heart"], action: function(n) { w.react(conv, msg.ts, n) } }]
     items.push({ label: m.app.tr("Add reaction…", "Adicionar reação…"), icon: "󰇵", hint: "R", action: function() { m.pickReaction(toolbar.visible ? reactBtn : box) } })
+    // A tombstone: its reactions and its thread are all that's left.
+    if (m.tombstone) {
+      items.push({ separator: true })
+      items.push(m.followItem(w, conv, msg))
+      items.push({ label: m.app.tr("Copy link", "Copiar link"), icon: "󰌷", hint: "L", action: function() { m.copyLink(w, conv, msg) } })
+      m.win.menu(items, x, y)
+      return
+    }
     if (!m.inThread) items.push({ label: m.app.tr("Reply in thread", "Responder na conversa"), icon: "󰍪", hint: "T", action: function() { w.openThread(conv, msg.threadTs || msg.ts) } })
     items.push({ label: m.app.tr("Forward message…", "Encaminhar mensagem…"), icon: "󰒖", hint: "F", action: function() { m.win.dialog("forward", { conv: conv, msg: msg }) } })
     items.push({ label: saved ? m.app.tr("Remove from Later", "Remover de Depois") : m.app.tr("Save for later", "Salvar para depois"), icon: saved ? "󰃀" : "󰃃", hint: "A", action: function() { w.toggleSaved(conv, msg) } })
@@ -547,12 +593,7 @@ Item {
     items.push({ separator: true })
     if (!m.inThread || msg.threadTs === msg.ts) items.push({ label: m.app.tr("Mark unread", "Marcar como não lida"), icon: "󰇰", hint: "U", action: function() { w.markUnread(conv, msg.ts) } })
     items.push({ label: m.app.tr("Remind me about this", "Lembrar-me disto"), icon: "󰀠", sub: m.remindItems(w, conv, msg) })
-    if (msg.threadTs || msg.replyCount > 0) {
-      var parent = msg.threadTs && msg.threadTs !== msg.ts ? (w.findAny(conv, msg.threadTs) || msg) : msg
-      var on = !!parent.subscribed
-      items.push({ label: on ? m.app.tr("Turn off notifications for replies", "Desativar notificações de respostas") : m.app.tr("Get notified about new replies", "Ativar notificações de respostas"),
-                   icon: on ? "󰂛" : "󰂚", action: function() { w.setFollow(conv, parent, !on) } })
-    }
+    if (msg.threadTs || msg.replyCount > 0) items.push(m.followItem(w, conv, msg))
     items.push({ separator: true })
     items.push({ label: pinned ? m.app.tr("Unpin from conversation", "Desafixar da conversa") : m.app.tr("Pin to conversation", "Fixar na conversa"), icon: "󰐃", hint: "P", action: function() { w.togglePin(conv, msg) } })
     items.push({ label: m.app.tr("Copy link", "Copiar link"), icon: "󰌷", hint: "L", action: function() { m.copyLink(w, conv, msg) } })

@@ -133,4 +133,6 @@ Rectangle {
   }
 
   onTsChanged: Qt.callLater(function() { box.focusInput() })
+  // Typing in a selected reply's text goes on here (RichText.toComposer).
+  function focusComposer() { if (box.visible) box.focusInput() }
 }

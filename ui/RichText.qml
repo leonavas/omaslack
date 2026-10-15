@@ -35,6 +35,7 @@ TextEdit {
   textFormat: TextEdit.RichText
   readOnly: true
   selectByMouse: true
+  selectByKeyboard: true         // Shift+arrows grow a selection made with the mouse
   persistentSelection: false
   wrapMode: TextEdit.Wrap
   color: muted ? t.fgDim : t.fg
@@ -45,6 +46,79 @@ TextEdit {
   selectedTextColor: t.fgBright
   activeFocusOnPress: false
   onLinkActivated: url => rt.link(url)
+
+  // A click leaves the keyboard where it was (the message box); text
+  // selected with the mouse takes it, so Ctrl+C, Ctrl+A and Shift+arrows
+  // reach the selection (which clears once the keyboard moves on).
+  onSelectedTextChanged: if (rt.selectedText !== "" && !rt.activeFocus) rt.forceActiveFocus()
+
+  // Typing goes on in the message box, as in Slack: on the ShortcutOverride
+  // Qt sends before the press itself, so the press lands in the box and
+  // nothing typed is lost (`typing`, `toComposer`).
+  Keys.onShortcutOverride: event => { if (rt.typing(event)) rt.toComposer() }
+
+  // Ctrl+C: the selection as plain text (copySelection). ↑ / ↓ stop at the
+  // text's first and last lines: past them the list around it would take
+  // them and jump to its current row; plain, they give the keyboard back to
+  // the box (a next ↑ there selects messages).
+  Keys.onPressed: event => {
+    var k = event.key
+    if (event.matches(StandardKey.Copy)) {
+      if (rt.selectedText !== "") { rt.copySelection(); event.accepted = true }
+      return
+    }
+    if (rt.typing(event)) { rt.toComposer(); return }
+    if (k !== Qt.Key_Up && k !== Qt.Key_Down) return
+    var y = rt.positionToRectangle(rt.cursorPosition).y
+    var edge = k === Qt.Key_Up ? y <= rt.positionToRectangle(0).y : y >= rt.positionToRectangle(rt.length).y
+    if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) event.accepted = true
+    else if (edge) { if (!(event.modifiers & Qt.ShiftModifier)) rt.toComposer(); event.accepted = true }
+  }
+
+  // A key that types (Shift at most): a character, Backspace, Enter, Esc.
+  function typing(event) {
+    if (!rt.activeFocus || (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) return false
+    var k = event.key
+    if (k === Qt.Key_Backspace || k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Escape) return true
+    var c = event.text.length ? event.text.charCodeAt(0) : 0
+    return c >= 32 && c !== 127
+  }
+
+  // The keyboard back to the box of the conversation or thread this text
+  // is in (their focusComposer; dialogs and search have none, and keep it),
+  // the selection let go.
+  function toComposer() {
+    for (var p = rt.parent; p; p = p.parent) {
+      if (typeof p.focusComposer !== "function") continue
+      p.focusComposer()
+      if (!rt.activeFocus) rt.deselect()
+      return
+    }
+  }
+
+  // Slack's copy: plain text, emoji as their characters or :name: (each
+  // picture's alt, Mrkdwn), lines as lines, pills without their room.
+  function copySelection() {
+    var a = rt.selectionStart, s = rt.selectedText, out = ""
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i)
+      if (c === "￼") {
+        var alt = /<img\b[^>]*\salt="([^"]*)"/i.exec(rt.getFormattedText(a + i, a + i + 1))
+        if (alt) out += Md.unescape(alt[1].replace(/&quot;/g, "\""))
+      }
+      else if (c === "\u2029" || c === "\u2028") out += "\n"
+      else if (c === "\u00a0") { if (!rt.pillRoom(a + i)) out += " " }
+      else out += c
+    }
+    rt.app.copy(out)
+  }
+
+  // The room at a pill's or inline code's ends (Md.pill, Md.codeSpan): in
+  // their word spacing, the no-break space that ends a run of them.
+  function pillRoom(p) {
+    function spaced(q) { return /word-spacing:/.test(rt.getFormattedText(q, q + 1)) }
+    return spaced(p) && !(rt.getText(p + 1, p + 2) === "\u00a0" && spaced(p + 1))
+  }
 
   onHtmlChanged: rt._still = false
   onTextChanged: if (rt.drawn || rt.gifs.length) { rt._at = null; Qt.callLater(rt.place) }

@@ -747,8 +747,7 @@ Item {
     var url = String(photo || "")
     var svgUrl = "data:image/svg+xml;utf8,"
     var drawn = url.indexOf(svgUrl) === 0 ? decodeURIComponent(url.slice(svgUrl.length)) : ""
-    var ext = drawn ? "svg" : ((url.match(/\.(png|jpe?g|gif|webp)(?:[?#]|$)/i) || [])[1] || "jpg").toLowerCase()
-    var file = url.indexOf("https://") === 0 || drawn ? root.cacheDir + "/files/avatars/" + Qt.md5(url) + "." + ext : ""
+    var file = drawn ? root.photosDir + "/" + Qt.md5(url) + ".svg" : (url.indexOf("https://") === 0 ? root.photosDir + "/" + root.photoName(url) : "")
     Quickshell.execDetached(["bash", "-c",
       'f="$1"; u="$2"; icon="$3"; drawn="$4"; shift 4; '
       + 'if [ -n "$f" ]; then '
@@ -759,6 +758,111 @@ Item {
       + 'exec notify-send "--icon=$icon" "$@"',
       "slack-notify", file, url, root.appIcon, drawn,
       "--app-name=Slack", "--hint=string:omarchy-exec-argv:" + JSON.stringify(open), title, body])
+  }
+
+  // ---------------------------------------------------------------- photos
+  // People's photos (and apps' and workspaces' icons) are kept on disk by
+  // their URL, beside the notifications' (a new photo is a new URL, so a new
+  // file; a week unseen and it goes, as the files do), and the avatars show
+  // them from there, decoded on the spot: one seen before is up at once,
+  // this session or the next, with no initials in between. (Qt keeps only a
+  // few decoded pictures, and the shell no HTTP cache: anything else came
+  // from Slack again, every time.) One not there yet loads from Slack
+  // meanwhile and is fetched behind it, a batch at a time.
+  readonly property string photosDir: root.cacheDir + "/files/avatars"
+  property int photosRev: 0
+  property bool _photosListed: false
+  property var _photoNames: ({})    // url → its file's name
+  property var _photosHere: ({})    // file name → on disk
+  property var _photosUsed: ({})    // file name → touched this session
+  property var _photosAsked: ({})   // url → fetched (once a session)
+  property var _photoQueue: []      // name, url, name, url…
+  property var _photoTouches: []
+
+  function photoName(url) {
+    var name = root._photoNames[url]
+    if (!name) {
+      var ext = ((url.match(/\.(png|jpe?g|gif|webp)(?:[?#]|$)/i) || [])[1] || "jpg").toLowerCase()
+      name = root._photoNames[url] = Qt.md5(url) + "." + ext
+    }
+    return name
+  }
+
+  // The photo at `url` as a file:// URL when it's on disk, else "" (and,
+  // unless `peek`, it's fetched there).
+  function photoFile(url, peek) {
+    root.photosRev
+    url = String(url || "")
+    if (url.indexOf("https://") !== 0) return ""
+    var name = root.photoName(url)
+    if (root._photosHere[name]) {
+      if (!root._photosUsed[name]) {
+        root._photosUsed[name] = true
+        root._photoTouches.push(root.photosDir + "/" + name)
+        Qt.callLater(root._touchPhotosSoon)
+      }
+      return "file://" + root.photosDir + "/" + name
+    }
+    if (!peek && root._photosListed && !root._photosAsked[url]) {
+      root._photosAsked[url] = true
+      root._photoQueue.push(name, url)
+      Qt.callLater(root._fetchPhotos)
+    }
+    return ""
+  }
+
+  // One on disk that didn't decode (cut short, or gone): out of the way,
+  // and from Slack again (fetched anew unless it already was this session).
+  function photoFailed(url) {
+    var name = root._photoNames[String(url || "")]
+    if (!name || !root._photosHere[name]) return
+    delete root._photosHere[name]
+    Quickshell.execDetached(["rm", "-f", "--", root.photosDir + "/" + name])
+    if (!photosLanded.running) photosLanded.start()
+  }
+
+  // A dozen side by side; each one printed as it lands. One already there
+  // (a notification's) is only marked as just used.
+  function _fetchPhotos() {
+    if (photoFetch.running || !root._photoQueue.length) return
+    photoFetch.command = ["bash", "-c",
+      'd="$1"; shift; mkdir -p "$d" || exit 0; '
+      + 'get() { [ -s "$1" ] && { touch -c -- "$1"; return 0; }; local t="$1.$BASHPID.part"; '
+      + 'curl -fsSL -m 15 -o "$t" "$2" && [ -s "$t" ] && mv -f -- "$t" "$1" && return 0; rm -f -- "$t"; return 1; }; '
+      + 'while [ $# -ge 2 ]; do { get "$d/$1" "$2" && printf "%s\\n" "$1"; } & shift 2; done; wait',
+      "omaslack-photos", root.photosDir].concat(root._photoQueue.splice(0, 24))
+    photoFetch.running = true
+  }
+  Process {
+    id: photoFetch
+    stdout: SplitParser {
+      onRead: data => {
+        root._photosHere[String(data).trim()] = true
+        if (!photosLanded.running) photosLanded.start()
+      }
+    }
+    onExited: (code, status) => Qt.callLater(root._fetchPhotos)
+  }
+  // Those that landed, in one go: every avatar looks again.
+  Timer { id: photosLanded; interval: 120; onTriggered: root.photosRev++ }
+
+  // What's on disk, at the start. Only the week's: older ones are on their
+  // way out (lifecycle), and fetched again if still in use.
+  Process {
+    id: photoList
+    command: ["find", root.photosDir, "-maxdepth", "1", "-type", "f", "-size", "+0", "-mtime", "-7", "!", "-name", "*.part", "-printf", "%f\\n"]
+    stdout: SplitParser { onRead: data => { root._photosHere[String(data).trim()] = true } }
+    onExited: (code, status) => { root._photosListed = true; root.photosRev++ }
+  }
+
+  // Their last use, for the week: once a session, a batch at a time.
+  function _touchPhotosSoon() { if (!photosTouch.running) photosTouch.start() }
+  Timer {
+    id: photosTouch
+    interval: 3000
+    onTriggered: {
+      if (root._photoTouches.length) Quickshell.execDetached(["touch", "-c", "--"].concat(root._photoTouches.splice(0)))
+    }
   }
 
   // ---------------------------------------------------------------- utilities
@@ -784,6 +888,7 @@ Item {
   // ---------------------------------------------------------------- lifecycle
   Component.onCompleted: {
     Quickshell.execDetached(["mkdir", "-p", "-m", "700", root.configDir, root.cacheDir, root.dataDir])
+    photoList.running = true
     Registry.service = root
     root.ready = true
     Qt.callLater(function() {

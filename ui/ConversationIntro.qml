@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Ui
 import "../lib/Util.js" as U
+import "../lib/Mrkdwn.js" as Md
 import "../lib/Model.js" as Model
 import "../lib/Registry.js" as Reg
 
@@ -89,7 +90,7 @@ Column {
     if (c.kind === "im") {
       if (intro.self) return esc(tr("This is your space. Draft messages, list your to-dos, or keep links and files handy. You can also talk to yourself here, but please bear in mind you'll have to supply both sides of the conversation.",
                                     "Este é o seu espaço. Rascunhe mensagens, anote tarefas ou guarde links e arquivos à mão. Você também pode falar sozinho aqui, mas lembre-se de que vai ter de fazer os dois lados da conversa."))
-      var tag = "<a href=\"slackqs://user/" + c.user + "\" style=\"text-decoration:none;\"><span style=\"color:" + intro.t.html.meText + ";background-color:" + intro.t.html.meBg + ";\"> @" + esc(intro.other ? intro.other.name : "") + " </span></a>"
+      var tag = Md.pill("@" + (intro.other ? intro.other.name : ""), intro.t.html.mention, intro.t.html.mentionBg, "slackqs://user/" + c.user, intro.t.html)
       return esc(tr("This conversation is just between ", "Esta conversa é apenas entre ")) + tag + esc(tr(" and you. Check out their profile to learn more about them.", " e você. Veja o perfil para saber mais sobre essa pessoa."))
     }
     if (c.kind === "mpim") {
