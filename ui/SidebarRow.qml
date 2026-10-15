@@ -33,7 +33,10 @@ Item {
        : (isConv && row.unread && app.unreadBackground ? t.alpha(t.blue, 0.10) : "transparent")))
   readonly property color under: Qt.tint(dropHere ? Qt.tint(t.sidebar, t.alpha(t.accent, 0.12)) : t.sidebar, fill)
 
-  height: isSection ? t.sp(narrow ? 14 : 32) : t.sp(narrow ? 40 : 28)
+  // Slack's spacer above a section header (all but the first): room on
+  // top, outside the header's own height.
+  readonly property real gap: isSection && row.gap && !narrow ? t.sp(10) : 0
+  height: (isSection ? t.sp(narrow ? 14 : 32) : t.sp(narrow ? 40 : 28)) + gap
 
   // The unread bar at the left edge (Preferences → Sidebar).
   Rectangle {
@@ -51,6 +54,7 @@ Item {
   Rectangle {
     visible: r.dropHere
     anchors.fill: parent
+    anchors.topMargin: r.gap
     color: r.t.alpha(r.t.accent, 0.12)
   }
   Rectangle {
@@ -76,6 +80,7 @@ Item {
   Item {
     visible: r.isSection
     anchors.fill: parent
+    anchors.topMargin: r.gap
     Rectangle { visible: r.narrow; anchors.centerIn: parent; width: parent.width * 0.5; height: 1; color: r.t.line }
     Row {
       visible: !r.narrow
@@ -168,7 +173,7 @@ Item {
 
     // Channel: # / lock / shared.
     Glyph {
-      visible: r.row.kind === "nav" || (r.isConv && (r.row.convKind === "channel" || r.row.convKind === "private")) || r.row.kind === "add"
+      visible: (r.row.kind === "nav" && !r.row.user) || (r.isConv && (r.row.convKind === "channel" || r.row.convKind === "private")) || r.row.kind === "add"
       anchors.centerIn: parent
       app: r.app
       icon: r.row.kind === "nav" ? (r.row.icon || "") : (r.row.kind === "add" ? "󰐕" : (r.row.convKind === "private" ? "󰌾" : (r.row.ext ? "󰇧" : "#")))
@@ -184,17 +189,22 @@ Item {
       app: r.app
       size: r.t.sp(9)
       ring: r.under
+      ink: r.selected ? r.t.rowSelectedText : "transparent"
       active: r.ws ? r.ws.isActive(r.row.user || "") : false
       paused: r.ws ? r.ws.isPaused(r.row.user || "") : false
     }
     Avatar {
-      visible: r.isConv && r.row.convKind === "im" && r.typingNames.length === 0 && (!r.ws || r.ws.sidebarAvatars || r.narrow)
+      // A DM's photo, or a page's that is someone's (Slackbot's link).
+      readonly property bool page: r.row.kind === "nav" && !!r.row.user
+      visible: page || (r.isConv && r.row.convKind === "im" && r.typingNames.length === 0 && (!r.ws || r.ws.sidebarAvatars || r.narrow))
+      anchors.centerIn: parent
       app: r.app
       ws: r.ws
       user: r.row.user || ""
-      size: parent.width
-      showPresence: true
+      size: page ? Math.round(parent.width * 0.8) : parent.width
+      showPresence: !page
       ring: r.under
+      presenceInk: r.selected ? r.t.rowSelectedText : "transparent"
       round: 0.25
       onClicked: r.activate()
     }
@@ -242,7 +252,8 @@ Item {
         id: label
         width: Math.max(0, Math.min(implicitWidth, labelBox.width - (youTag.visible ? youTag.implicitWidth + labelRow.spacing : 0) - (statusIcon.visible ? statusIcon.width + labelRow.spacing : 0)))
         anchors.verticalCenter: parent.verticalCenter
-        text: r.row.kind === "add" ? (r.row.sectionType === "channels" ? r.app.tr("Add channels", "Adicionar canais") : r.app.tr("Add coworkers", "Adicionar colegas"))
+        text: r.row.kind === "add" ? (r.row.sectionType === "channels" ? r.app.tr("Add channels", "Adicionar canais")
+              : (r.row.invite ? r.app.tr("Invite people", "Convidar pessoas") : r.app.tr("Add coworkers", "Adicionar colegas")))
             : (r.row.self && r.ws && r.ws.user(r.row.user) ? r.ws.user(r.row.user).name : (r.row.label || ""))
         color: r.ink
         font.family: r.t.font
@@ -335,6 +346,7 @@ Item {
   MouseArea {
     id: ma
     anchors.fill: parent
+    anchors.topMargin: r.gap
     hoverEnabled: true
     z: -1
     cursorShape: r.isSection ? Qt.ArrowCursor : Qt.PointingHandCursor
@@ -373,6 +385,7 @@ Item {
 
   function activate() {
     if (r.isSection) { r.ws.toggleCollapsed(r.row.id); return }
+    if (r.row.kind === "nav" && r.row.user) { r.ws.openDm([r.row.user]); return }
     if (r.row.kind === "nav") { r.ws.showView(r.row.id); return }
     if (r.row.kind === "add") { r.row.sectionType === "channels" ? r.win.dialog("browse") : r.win.dialog("invite"); return }
     r.ws.open(r.row.id)

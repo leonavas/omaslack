@@ -98,7 +98,7 @@ Item {
     if (!item) return
     var name = p.shownName(item)
     var cb = p.pickCb
-    p.bump(item.name)
+    if (p.ws) p.ws.bumpEmoji(item.name)
     p.close()
     if (cb) Qt.callLater(function() { cb(name) })
   }
@@ -178,31 +178,6 @@ Item {
     return p._cat
   }
 
-  function usage() {
-    var u = p.app.setting("emojiUsage", {})
-    return u && typeof u === "object" ? u : {}
-  }
-
-  // name -> {n: times picked, t: last pick (unix s)}; bare numbers read as counts.
-  function used(u, name) {
-    var e = u[name]
-    if (typeof e === "number") return { n: e, t: 0 }
-    return e && typeof e === "object" ? { n: Number(e.n) || 0, t: Number(e.t) || 0 } : { n: 0, t: 0 }
-  }
-
-  function bump(base) {
-    base = String(base || "").split("::")[0]
-    if (!base) return
-    var u = U.copy(p.usage())
-    u[base] = { n: p.used(u, base).n + 1, t: Math.floor(Date.now() / 1000) }
-    var keys = Object.keys(u)
-    if (keys.length > 150) {
-      keys.sort(function(a, b) { var x = p.used(u, a), y = p.used(u, b); return x.n - y.n || x.t - y.t })
-      for (var i = 0; i < keys.length - 150; i++) delete u[keys[i]]
-    }
-    p.app.setSetting("emojiUsage", u)
-  }
-
   function itemFor(name) {
     var r = Emoji.resolve(name, p.ws ? p.ws.customEmoji : null, p.ws ? p.ws.emojiAliases : null)
     if (!r) return null
@@ -211,19 +186,12 @@ Item {
     return p.usable(it) ? it : null
   }
 
-  // The most used ones (counted on every pick, the latest first among
-  // equals), topped up with Slack's usual suspects: two full rows.
+  // Slack's frequently used (Workspace.frequentEmoji: its frecency and
+  // emoji_use, plus the picks here), topped up with its usual suspects: two
+  // full rows.
   function frequent() {
-    var u = p.usage()
     var max = Math.max(16, p.cols * 2)
-    var names = Object.keys(u).sort(function(a, b) {
-      var x = p.used(u, a), y = p.used(u, b)
-      if (x.n !== y.n) return y.n - x.n
-      if (x.t !== y.t) return y.t - x.t
-      var fa = Emoji.FREQUENT.indexOf(a), fb = Emoji.FREQUENT.indexOf(b)
-      if (fa !== fb) return (fa < 0 ? 999 : fa) - (fb < 0 ? 999 : fb)
-      return a < b ? -1 : 1
-    })
+    var names = p.ws ? p.ws.frequentEmoji : []
     var out = [], seen = {}
     function add(n) {
       if (out.length >= max || seen[n]) return

@@ -2,14 +2,14 @@ import QtQuick
 import QtQuick.Window
 import qs.Commons
 import qs.Ui
-import "../lib/Emoji.js" as Emoji
 import "../lib/Registry.js" as Reg
 
 // Context menus over the whole window: a stack of cards, submenus opening
 // beside their row. Items: {label, icon, hint, action(), danger, checked,
 // enabled, sub: [items]}, {separator: true}, {header: "…"} (a group's
 // label), {title: "…"} (the menu's name, on top),
-// {reactions: ["white_check_mark", …], action(name)}. Closed, the keyboard
+// {reactions: ["white_check_mark", …], ws, action(name)} (`ws` draws the
+// workspace's custom ones). Closed, the keyboard
 // goes back where it was.
 Item {
   id: menuLayer
@@ -165,7 +165,7 @@ Item {
                     required property var modelData
                     width: menuLayer.t.sp(34); height: width; radius: width / 2
                     color: rma.containsMouse ? menuLayer.t.hoverStrong : menuLayer.t.hover
-                    Text { anchors.centerIn: parent; text: Emoji.standard(parent.modelData); font.pixelSize: menuLayer.t.sp(18) }
+                    EmojiIcon { anchors.centerIn: parent; app: menuLayer.app; ws: row.modelData.ws || null; name: parent.modelData; size: menuLayer.t.sp(18) }
                     MouseArea { id: rma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                       onClicked: { var f = row.modelData.action; var n = parent.modelData; menuLayer.close(); Qt.callLater(function() { f(n) }) } }
                   }

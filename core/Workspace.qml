@@ -124,12 +124,44 @@ Item {
 
   readonly property var sidebarRows: {
     root.countsRev; root.convsRev; root.usersRev; root.sectionsRev; root.collapsedRev; root.draftsRev
+    var rules = root.sidebarRules
     return Model.sidebar({
       lang: root.lang, me: root.me.id, convs: root.convs, users: root.users, handles: root.handles, counts: root.counts,
       sections: root.sections, stars: root.stars, openIms: root.openIms, prefs: root.prefsLoaded ? root.prefs : {},
       current: root.current, view: root.view, focused: root.focused, collapsed: root.collapsed, drafts: root.drafts,
-      draftCount: Object.keys(root.drafts).length, threads: root.threads, hideInactive: root.hideInactive, recents: root.recents
+      draftCount: Object.keys(root.drafts).length, threads: root.threads, hideInactive: root.hideInactive, recents: root.recents,
+      sidebarBehavior: rules.sidebarBehavior, sectionPrefs: rules.sectionPrefs, paidTeam: rules.paidTeam,
+      canInvite: rules.canInvite, hideSlackbot: rules.hideSlackbot, invitePeople: rules.invitePeople
     })
+  }
+
+  // What Slack's sidebar rules read (Model.sidebar): the sidebar's "Show"
+  // and each section's, the plan, whether you can invite people, and
+  // whether the new Slackbot's link took its DM's place.
+  readonly property var sidebarRules: {
+    root.usersRev
+    var pref = function(k) { return root.rawPrefs[k] !== undefined ? root.rawPrefs[k] : root.bootPrefs[k] }
+    var behavior = pref("sidebar_behavior")
+    var secs = pref("channel_sections")
+    if (typeof secs === "string") { try { secs = JSON.parse(secs || "{}") } catch (e) { secs = {} } }
+    var mine = root.users[root.me.id] || {}
+    var tp = root.teamPrefs || {}
+    return {
+      // Until the prefs come, the cached "Active only".
+      sidebarBehavior: typeof behavior === "string" ? behavior : (root.hideInactive ? "hide_inactive_channels" : ""),
+      sectionPrefs: secs && typeof secs === "object" ? secs : {},
+      paidTeam: root.teamPlan === null || root.teamPlan !== "",
+      // Slack's canUserSeeInviteModal: an admin, or a full member when
+      // invites aren't for admins only or can be requested.
+      canInvite: !!mine.admin || (!mine.guest && (tp.invites_only_admins !== true || tp.invite_requests_enabled === true)),
+      // Slack asks permissions.info (an edge API) for the new Slackbot;
+      // its link's "New" tag seen, or big mode had, tells it here.
+      hideSlackbot: pref("enable_slackbot_view") !== false && (pref("has_seen_slackbot_ai_new_tag") === true || pref("had_slackbot_big_mode_access") === true),
+      // "Invite people" over "Add coworkers": a workspace (not an org's)
+      // made in March 3–27 2025 or since April 1 2025 (Slack's invite
+      // refresh experiments).
+      invitePeople: !root.teamEnterprise && ((root.teamCreated >= 1741033260 && root.teamCreated <= 1743102122) || root.teamCreated >= 1743534000)
+    }
   }
 
   // Unread conversations for the bar's hover card, newest first:
@@ -442,6 +474,7 @@ Item {
   }
 
   function start() {
+    if (root.app) root.localFrecency = root.app.teamSetting(root.teamId, "emojiFrecency", {}) || {}
     root.api("auth.test", {}, function(b) {
       root.authError = ""
       var domain = String(b.url || "").replace(/^https?:\/\//, "").split(".")[0]
@@ -561,6 +594,10 @@ Item {
       root.openIms = open
       if (b.prefs && typeof b.prefs.show_sidebar_avatars === "boolean") root.sidebarAvatars = root.app ? root.app.setting("sidebarAvatars", b.prefs.show_sidebar_avatars) !== false : b.prefs.show_sidebar_avatars
       if (b.prefs && typeof b.prefs.sidebar_behavior === "string") root.hideInactive = b.prefs.sidebar_behavior === "hide_inactive_channels"
+      root.bootPrefs = b.prefs || {}
+      if (b.team && b.team.prefs) root.teamPrefs = b.team.prefs
+      if (b.team && typeof b.team.plan === "string") root.teamPlan = b.team.plan
+      if (b.team) { root.teamCreated = Number(b.team.date_create || b.team.date_created) || 0; root.teamEnterprise = !!b.team.enterprise_id }
       root.sectionsRev++
     }, function() {})
   }
@@ -629,6 +666,96 @@ Item {
     }, function() {})
   }
   property var rawPrefs: ({})
+  property var bootPrefs: ({})        // client.userBoot's, until users.prefs.get answers
+  property var teamPrefs: ({})        // the workspace's (client.userBoot's team.prefs)
+  property var teamPlan: null         // client.userBoot's team.plan ("" when free), null until known
+  property real teamCreated: 0        // ... its date_create (seconds)
+  property bool teamEnterprise: false // ... part of an Enterprise org
+  // The one-click reactions' prefs, asked for by name (loadEmojiUse) and
+  // kept current by pref_change.
+  readonly property var quickPrefNames: ["user_customized_quick_reactions_display_feature", "user_customized_quick_reactions_use_frequently_used_emoji",
+    "user_customized_quick_reactions_has_customized", "user_customized_quick_reactions_emoji_1", "user_customized_quick_reactions_emoji_2",
+    "user_customized_quick_reactions_emoji_3", "preferred_skin_tone"]
+  property var quickPrefs: ({})
+  function userPref(k) {
+    if (root.quickPrefs[k] !== undefined) return root.quickPrefs[k]
+    return root.rawPrefs[k] !== undefined ? root.rawPrefs[k] : root.bootPrefs[k]
+  }
+
+  // ------------------------------------------------------ emoji usage
+  // Slack's memory of the emoji the user picks (the web client's
+  // loadFrecencyPrefs): `emoji_use`, times by name, and `frecency`, its
+  // jumper's visits, emoji among them as "E" + code points / custom name.
+  // Only read: the web client writes `frecency` whole, from its own copy,
+  // every minute, so what is picked here stays here (bumpEmoji).
+  property var emojiUse: ({})
+  property var emojiFrecency: ({})    // emoji id → score (Emoji.frecencyScores)
+  property var localFrecency: ({})    // name → {count, visits}, picked here
+  function loadEmojiUse() {
+    root.api("users.prefs.get", { prefs: ["emoji_use", "frecency"].concat(root.quickPrefNames).join(",") }, function(b) {
+      var p = b.prefs || {}
+      root.emojiUse = Emoji.jsonPref(p.emoji_use)
+      root.emojiFrecency = Emoji.frecencyScores(p.frecency)
+      var q = {}
+      root.quickPrefNames.forEach(function(k) { if (p[k] !== undefined) q[k] = p[k] })
+      root.quickPrefs = q
+    }, function() {})
+  }
+
+  // An emoji used here (a pick in the picker, a one-click reaction),
+  // counted as Slack counts a visit: once more, at this time (the last 10).
+  function bumpEmoji(name) {
+    var base = String(name || "").replace(/^:|:$/g, "").split("::")[0]
+    if (!base) return
+    var f = U.copy(root.localFrecency)
+    var e = f[base] || { count: 0, visits: [] }
+    f[base] = { count: (Number(e.count) || 0) + 1, visits: (e.visits || []).concat([Date.now()]).slice(-10) }
+    var keys = Object.keys(f)
+    if (keys.length > 100) {
+      var lastOf = function(k) { var v = f[k].visits || []; return v.length ? v[v.length - 1] : 0 }
+      keys.sort(function(a, b) { return lastOf(a) - lastOf(b) })
+      for (var i = 0; i < keys.length - 100; i++) delete f[keys[i]]
+    }
+    root.localFrecency = f
+    if (root.app) root.app.setTeamSetting(root.teamId, "emojiFrecency", f)
+  }
+
+  // The picker's "Frequently used" and, when so set, the one-click reactions.
+  readonly property var frequentEmoji: Emoji.frequentlyUsed(root.emojiFrecency, root.emojiUse, root.localFrecency, root.customEmoji, root.emojiAliases, 36)
+
+  // The skin tone (2–6, 0: none): the picker's, else Slack's preferred_skin_tone.
+  readonly property int skinTone: {
+    var mine = root.app ? Number(root.app.setting("skinTone", 0)) || 0 : 0
+    if (mine > 0) return Math.min(6, mine + 1)
+    var s = Number(root.userPref("preferred_skin_tone"))
+    return s >= 2 && s <= 6 ? s : 0
+  }
+
+  // Slack's one-click reactions (Preferences → Messages & media → Emoji),
+  // the emoji on a message's hover bar, as the web client picks them: none
+  // when user_customized_quick_reactions_display_feature is 0; the three
+  // most used when ..._use_frequently_used_emoji; else the user's three
+  // (..._emoji_1–3), the admin's (team admin_customized_quick_reactions)
+  // or ✅ 👀 🙌. Standard ones in the skin tone.
+  readonly property var quickReactions: {
+    var on = function(v) { return v === true || v === "true" || Number(v) > 0 }
+    var set = function(v) { return v !== undefined && v !== null && v !== "" }
+    var shown = root.userPref("user_customized_quick_reactions_display_feature")
+    if (set(shown) && !on(shown)) return []
+    var names
+    if (on(root.userPref("user_customized_quick_reactions_use_frequently_used_emoji"))) names = root.frequentEmoji.slice(0, 3)
+    else {
+      var admin = Emoji.nameList(root.teamPrefs.admin_customized_quick_reactions)
+      var custom = root.userPref("user_customized_quick_reactions_has_customized")
+      var mine = !set(custom) || on(custom)
+      names = Emoji.QUICK.map(function(dflt, i) {
+        var own = mine ? Emoji.nameList(String(root.userPref("user_customized_quick_reactions_emoji_" + (i + 1)) || ""))[0] : ""
+        return own || admin[i] || dflt
+      })
+    }
+    var tone = root.skinTone
+    return names.map(function(n) { return Emoji.withTone(n, tone) })
+  }
 
   function loadAccount() {
     root.api("users.getPresence", {}, function(b) {
@@ -775,6 +902,7 @@ Item {
     root._upSince = Date.now()
     root.loadCounts()
     root.loadPrefs()
+    root.loadEmojiUse()
     root.refreshOpen()
   }
 
@@ -889,6 +1017,29 @@ Item {
     case "pref_change":
       if (e.name === "all_notifications_prefs" || e.name === "muted_channels") root.loadPrefs()
       if (e.name === "sidebar_behavior") { root.hideInactive = e.value === "hide_inactive_channels"; root.sectionsRev++ }
+      // The sidebar's rules (sidebarRules) read these.
+      if (["sidebar_behavior", "channel_sections", "enable_slackbot_view"].indexOf(e.name) >= 0) {
+        var sp = U.copy(root.rawPrefs)
+        sp[e.name] = e.value
+        root.rawPrefs = sp
+      }
+      if (root.quickPrefNames.indexOf(e.name) >= 0) {
+        var qp = U.copy(root.quickPrefs)
+        qp[e.name] = e.value
+        root.quickPrefs = qp
+      }
+      if (e.name === "emoji_use" || e.name === "frecency") root.loadEmojiUse()
+      break
+    // Slack's word that `frecency` / `emoji_use` changed (another client wrote them).
+    case "search_frecency":
+      if (e.value === "updated") root.loadEmojiUse()
+      break
+    case "team_pref_change":
+      if (e.name === "admin_customized_quick_reactions") {
+        var tp = U.copy(root.teamPrefs)
+        tp[e.name] = e.value
+        root.teamPrefs = tp
+      }
       break
     case "channel_joined": case "group_joined": case "im_created": case "mpim_joined": case "channel_created":
       root.loadConversations(); break
@@ -1876,6 +2027,7 @@ Item {
         root.replaceEverywhere(conv, ts, function(o) { return Model.patch(o, { reactions: rs }) })
       }, function() {})
     })
+    return add
   }
 
   function runSlash(conv, line, threadTs) {

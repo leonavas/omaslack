@@ -20,6 +20,8 @@ Item {
   property int size: t.avatar
   property bool showPresence: false
   property color ring: t.pane
+  // A selected row's text color, for the presence dot (PresenceDot.ink).
+  property color presenceInk: "transparent"
   property real round: 0.22
   property bool big: size > 48
   signal clicked()
@@ -134,6 +136,7 @@ Item {
     anchors.bottomMargin: -2
     size: Math.max(8, Math.round(a.size * 0.3))
     ring: a.ring
+    ink: a.presenceInk
     // A deactivated account: always Slack's hollow ring.
     active: a.ws && !(a.u && a.u.deleted) ? a.ws.isActive(a.user) : false
     paused: a.ws && !(a.u && a.u.deleted) ? a.ws.isPaused(a.user) : false
