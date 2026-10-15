@@ -1233,6 +1233,19 @@ Item {
       root.subscribePresence()
       if (!root.presenceLive && root.foreground) root.pollPresence()
       root.pollOthersDnd()
+      root.sweepStatuses()
+    }
+  }
+
+  // A status that ran out since the last look leaves the sidebar, the
+  // messages and the profiles (Model.status), whether or not Slack says so.
+  property real _statusSweep: Date.now() / 1000
+  function sweepStatuses() {
+    var since = root._statusSweep, now = Date.now() / 1000
+    root._statusSweep = now
+    for (var id in root.users) {
+      var x = root.users[id].statusExp
+      if (x > since && x <= now) { root.usersRev++; return }
     }
   }
 

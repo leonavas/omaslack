@@ -220,15 +220,16 @@ DialogFrame {
               }
               EmojiIcon {
                 id: emoji
-                visible: !!cell.st && (cell.st.emoji !== "" || cell.st.unicode !== "")
+                visible: !!cell.st && (cell.st.emoji !== "" || cell.st.unicode !== "" || cell.st.url !== "")
                 anchors.verticalCenter: nameText.verticalCenter
                 app: d.app
                 ws: d.ws
                 name: cell.st ? cell.st.emoji.replace(/:/g, "") : ""
                 glyph: cell.st && cell.st.unicode ? Emoji.fromHex(cell.st.unicode) : ""
+                url: cell.st ? cell.st.url : ""
                 size: d.t.sp(16)
-                MouseArea { id: emojiMa; anchors.fill: parent; hoverEnabled: true }
-                PanelToolTip { visible: emojiMa.containsMouse && !!cell.st && cell.st.text !== ""; text: cell.st ? cell.st.text : "" }
+                HoverHandler { id: emojiHover }
+                StatusTip { app: d.app; ws: d.ws; status: cell.st; hovered: emojiHover.hovered }
               }
             }
             Text {

@@ -291,8 +291,11 @@ Item {
                 ws: m.ws
                 name: m.statusOf ? m.statusOf.emoji.replace(/:/g, "") : ""
                 glyph: m.statusOf && m.statusOf.unicode ? Emoji.fromHex(m.statusOf.unicode) : ""
+                url: m.statusOf ? m.statusOf.url : ""
                 size: m.t.sp(16)
                 anchors.verticalCenter: nameText.verticalCenter
+                HoverHandler { id: statusHover }
+                StatusTip { app: m.app; ws: m.ws; status: m.statusOf; hovered: statusHover.hovered }
               }
               Rectangle {
                 visible: !!m.who && m.who.app

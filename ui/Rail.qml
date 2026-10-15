@@ -328,16 +328,7 @@ Item {
           cursorShape: Qt.PointingHandCursor
           onClicked: rail.win.dialog("status", {})
         }
-        PanelToolTip {
-          visible: statusMa.containsMouse
-          text: {
-            var s = rail.myStatus
-            if (!s) return ""
-            var out = s.text || s.emoji
-            if (s.exp) out += (out ? "  ·  " : "") + U.untilLabel(s.exp, rail.app.lang, rail.app.clock24)
-            return out
-          }
-        }
+        StatusTip { app: rail.app; ws: rail.ws; status: rail.myStatus; hovered: statusMa.containsMouse }
       }
     }
   }

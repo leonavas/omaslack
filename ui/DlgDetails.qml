@@ -793,6 +793,7 @@ DialogFrame {
                     ws: d.ws
                     name: mrow.status ? String(mrow.status.emoji || "").replace(/^:|:$/g, "") : ""
                     size: d.t.sp(16)
+                    StatusTip { app: d.app; ws: d.ws; status: mrow.status; area: mrowMa }
                   }
                   Text {
                     visible: !mrow.isAdd && d.ws && mrow.modelData.id === d.ws.me.id

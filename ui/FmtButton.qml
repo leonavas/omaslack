@@ -23,7 +23,7 @@ Rectangle {
   anchors.verticalCenter: parent ? parent.verticalCenter : undefined
   radius: Math.max(4, t.radiusSmall)
   color: dim ? "transparent" : (ma.pressed ? t.press : (active ? t.hoverStrong : (ma.containsMouse ? t.hover : "transparent")))
-  Glyph { id: g; app: b.app; anchors.centerIn: parent; icon: b.icon; size: b.iconSize; color: b.dim ? b.t.alpha(b.t.fgDim, 0.3) : (ma.containsMouse || b.active ? b.t.fgBright : b.tone) }
+  Glyph { id: g; app: b.app; anchors.centerIn: parent; inkCentered: true; icon: b.icon; size: b.iconSize; color: b.dim ? b.t.alpha(b.t.fgDim, 0.3) : (ma.containsMouse || b.active ? b.t.fgBright : b.tone) }
   Rectangle {
     visible: b.underlined
     anchors.horizontalCenter: parent.horizontalCenter

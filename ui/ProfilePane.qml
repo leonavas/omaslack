@@ -212,13 +212,16 @@ Rectangle {
         }
         EmojiIcon {
           id: statusIcon
-          visible: !!pp.status && (pp.status.emoji !== "" || pp.status.unicode !== "")
+          visible: !!pp.status && (pp.status.emoji !== "" || pp.status.unicode !== "" || pp.status.url !== "")
           app: pp.app
           ws: pp.ws
           name: pp.status ? pp.status.emoji.replace(/:/g, "") : ""
           glyph: pp.status && pp.status.unicode ? Emoji.fromHex(pp.status.unicode) : ""
+          url: pp.status ? pp.status.url : ""
           size: pp.t.sp(22)
           anchors.verticalCenter: parent.verticalCenter
+          HoverHandler { id: statusHover }
+          StatusTip { app: pp.app; ws: pp.ws; status: pp.status; hovered: statusHover.hovered }
         }
         Rectangle {
           id: appTagBox

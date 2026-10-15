@@ -35,9 +35,13 @@ Item {
   Row {
     id: row
     anchors.centerIn: parent
+    // Icon only: centre the drawing, not the font's narrower advance cell.
+    anchors.horizontalCenterOffset: b.label ? 0 : glyph.anchors.horizontalCenterOffset
     spacing: b.t.sp(6)
     Glyph {
+      id: glyph
       app: b.app
+      inkCentered: b.label === ""
       icon: b.icon
       size: b.iconSize
       color: b.color

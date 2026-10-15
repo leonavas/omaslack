@@ -356,6 +356,7 @@ DialogFrame {
               ws: d.ws
               name: rowItem.status ? String(rowItem.status.emoji || "").replace(/^:|:$/g, "") : ""
               size: d.t.sp(16)
+              StatusTip { app: d.app; ws: d.ws; status: rowItem.status; area: rowMa }
             }
             Text {
               anchors.verticalCenter: parent.verticalCenter
