@@ -47,6 +47,7 @@ Item {
     Text {
       visible: b.label !== ""
       text: b.label
+      textFormat: Text.PlainText
       color: b.color
       font.family: b.t.font
       font.pixelSize: b.t.fsSmall

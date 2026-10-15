@@ -82,6 +82,7 @@ Rectangle {
             width: parent.width - lv.t.sp(20)
             wrapMode: Text.Wrap
             text: lv.app.tr("The session for ", "A sessão de ") + lv.teamName(parent.modelData) + lv.app.tr(" expired. Sign in again.", " expirou. Entre de novo.")
+            textFormat: Text.PlainText
             color: lv.t.fg
             font.family: lv.t.font
             font.pixelSize: lv.t.fsSmall
@@ -113,6 +114,7 @@ Rectangle {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         text: lv.app.loginStatus
+        textFormat: Text.PlainText
         color: lv.t.fgDim
         font.family: lv.t.font
         font.pixelSize: lv.t.fsSmall
@@ -132,6 +134,7 @@ Rectangle {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         text: lv.app.loginError
+        textFormat: Text.PlainText
         color: lv.t.red
         font.family: lv.t.font
         font.pixelSize: lv.t.fsSmall
@@ -198,6 +201,7 @@ Rectangle {
           horizontalAlignment: Text.AlignHCenter
           wrapMode: Text.Wrap
           text: lv.error
+          textFormat: Text.PlainText
           color: lv.t.red
           font.family: lv.t.font
           font.pixelSize: lv.t.fsSmall

@@ -243,6 +243,7 @@ DialogFrame {
                 width: Math.min(implicitWidth, parent.width - d.t.sp(24))
                 anchors.verticalCenter: parent.verticalCenter
                 text: row.c.name + (row.c.archived ? d.app.tr(" (archived)", " (arquivado)") : "")
+                textFormat: Text.PlainText
                 color: row.c.archived ? d.t.fgDim : d.t.fgBright
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText
@@ -272,6 +273,7 @@ DialogFrame {
                   if (row.c.purpose) bits.push(Md.flat({ text: row.c.purpose, blocks: [], files: [], attachments: [] }, d.ctx, 160))
                   return bits.join("  ·  ")
                 }
+                textFormat: Text.PlainText
                 color: d.t.fgDim
                 font.family: d.t.font
                 font.pixelSize: d.t.fsSmall

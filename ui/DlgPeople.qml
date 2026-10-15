@@ -211,6 +211,7 @@ DialogFrame {
                 id: nameText
                 width: Math.min(implicitWidth, parent.width - d.t.sp(15) - (emoji.visible ? emoji.width + d.t.sp(6) : 0))
                 text: cell.u ? cell.u.name + (cell.self ? d.app.tr(" (you)", " (você)") : "") : ""
+                textFormat: Text.PlainText
                 color: d.t.fgBright
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText
@@ -233,6 +234,7 @@ DialogFrame {
             Text {
               width: parent.width
               text: cell.u ? (cell.u.title || (cell.u.real && cell.u.real !== cell.u.name ? cell.u.real : (cell.u.handle ? "@" + cell.u.handle : ""))) : ""
+              textFormat: Text.PlainText
               color: d.t.fgDim
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -252,6 +254,7 @@ DialogFrame {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
           text: d.query.trim() ? d.app.tr("No one matches “", "Ninguém encontrado para “") + d.query.trim() + "”" : d.app.tr("No one here yet", "Ninguém por aqui ainda")
+          textFormat: Text.PlainText
           color: d.t.fgDim
           font.family: d.t.font
           font.pixelSize: d.t.fsText

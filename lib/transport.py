@@ -9,8 +9,8 @@ cookie database. One process per workspace, spoken to in JSON lines:
   stdin   {"id": 7, "op": "call", "method": "auth.test", "params": {...}}
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
-Ops: creds, call, download, post_file, multipart, read_cookie, ws_open,
-ws_send, ws_close. Socket traffic comes back unprompted as
+Ops: creds, call, download, post_file, multipart, read_cookie, write_private,
+ws_open, ws_send, ws_close. Socket traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
 Credentials only ever arrive on stdin and only ever go to slack.com hosts.
 """
@@ -34,7 +34,20 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPSConnection, HTTPException
 
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
+
+def chrome_ua():
+    """A current desktop Chrome's user agent, reduced as Chrome sends it: the
+    major from the date (140 shipped on 2025-09-02, 1756771200 UTC, then one
+    every 4 weeks), one less so it's never one that isn't out yet. The same
+    sum as lib/Util.js chromeUa."""
+    major = max(140, 140 + int((time.time() - 1756771200) // (28 * 86400)) - 1)
+    return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%d.0.0.0 Safari/537.36" % major
+
+
+# Handed in by Transport.qml (lib/Util.js chromeUa); one line of plain text.
+UA = os.environ.get("OMASLACK_UA", "").strip()
+if not UA or not UA.isascii() or not UA.isprintable():
+    UA = chrome_ua()
 API_HOST = "slack.com"
 WS_PING_EVERY = 30
 WS_DEAD_AFTER = 95
@@ -146,8 +159,7 @@ def op_call(msg):
         else:
             params[k] = str(v)
     body = urllib.parse.urlencode(params).encode()
-    host = msg.get("host") or API_HOST
-    url = "https://%s/api/%s" % (host, method)
+    url = "https://%s/api/%s" % (API_HOST, method)
     headers = auth_headers()
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     net_tries = 0
@@ -211,9 +223,27 @@ def op_download(msg):
         if mime.startswith("text/html") and not msg.get("html_ok"):
             os.unlink(tmp)
             return {"ok": False, "error": "html"}
+        # `no_clobber` (a save to Downloads): a file already there stays, and
+        # this one becomes "name (1).ext", "name (2).ext"…
+        if msg.get("no_clobber"):
+            dest = free_name(dest)
         os.replace(tmp, dest)
         return {"ok": True, "path": dest, "mime": mime}
     return {"ok": False, "error": "redirects"}
+
+
+def free_name(dest):
+    """`dest`, or the first "name (n).ext" not taken, claimed on the spot
+    (O_EXCL) so two saves never pick the same one."""
+    stem, ext = os.path.splitext(dest)
+    n = 0
+    while True:
+        cand = dest if n == 0 else "%s (%d)%s" % (stem, n, ext)
+        try:
+            os.close(os.open(cand, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+            return cand
+        except FileExistsError:
+            n += 1
 
 
 def op_post_file(msg):
@@ -259,30 +289,84 @@ def op_multipart(msg):
         return {"ok": False, "error": str(e)}
 
 
+def xdg_dir(var, fallback):
+    return os.path.join(os.environ.get(var) or os.path.join(os.path.expanduser("~"), fallback), "omaslack")
+
+
+COOKIE_SQL = ("select value, host_key from cookies where name = 'd' and (host_key = '.slack.com' or host_key like '%.slack.com'"
+              " or host_key = 'slack.com') order by length(value) desc")
+
+
+def cookie_rows(db, readonly):
+    if readonly:
+        con = sqlite3.connect("file:%s?mode=ro" % urllib.parse.quote(db), uri=True)
+    else:
+        con = sqlite3.connect(db)
+    try:
+        return con.execute(COOKIE_SQL).fetchall()
+    finally:
+        con.close()
+
+
 def op_read_cookie(msg):
     """The `d` cookie the sign-in window's browser profile saved (HttpOnly:
-    the page itself can never read it)."""
-    db = msg["db"]
-    if not os.path.exists(db):
+    the page itself can never read it). That profile is the plugin's own
+    (login/Login.qml, under $XDG_DATA_HOME/omaslack/webview), never one of
+    the user's browsers: any other path is refused."""
+    base = os.path.realpath(os.path.join(xdg_dir("XDG_DATA_HOME", ".local/share"), "webview"))
+    db = os.path.realpath(msg.get("db") or base)
+    if db == base or os.path.commonpath([base, db]) != base:
+        return {"ok": False, "error": "not the sign-in profile"}
+    if not os.path.isfile(db):
         return {"ok": False, "error": "no cookie database"}
-    tmpdir = tempfile.mkdtemp()
     try:
-        copy = os.path.join(tmpdir, "Cookies")
-        shutil.copyfile(db, copy)
-        if os.path.exists(db + "-journal"):
-            shutil.copyfile(db + "-journal", copy + "-journal")
-        con = sqlite3.connect(copy)
-        rows = con.execute(
-            "select value, host_key from cookies where name = 'd' and (host_key = '.slack.com' or host_key like '%.slack.com' or host_key = 'slack.com') order by length(value) desc").fetchall()
-        con.close()
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        rows = cookie_rows(db, True)
+    except sqlite3.Error:
+        rows = None
+    if rows is None:
+        # Read-only refused (a journal to roll back, a lock): a copy in a
+        # private (0700) temp dir, gone as soon as it's read.
+        tmpdir = tempfile.mkdtemp(prefix="omaslack-")
+        try:
+            copy = os.path.join(tmpdir, "Cookies")
+            shutil.copyfile(db, copy)
+            if os.path.exists(db + "-journal"):
+                shutil.copyfile(db + "-journal", copy + "-journal")
+            rows = cookie_rows(copy, False)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
     for value, host in rows:
         if value:
             return {"ok": True, "cookie": value}
     return {"ok": False, "error": "no d cookie"}
+
+
+def op_write_private(msg):
+    """A file of the plugin's config dir (accounts.json: the sessions), the
+    user's alone from its first byte: a 0600 temp file beside it (mkstemp),
+    synced, then renamed over it in one step. The dir is made 0700."""
+    name = msg.get("name") or ""
+    if not name or name != os.path.basename(name) or name.startswith("."):
+        return {"ok": False, "error": "bad name"}
+    d = xdg_dir("XDG_CONFIG_HOME", ".config")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    fd, tmp = tempfile.mkstemp(prefix="." + name + ".", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(msg.get("text") or "")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, os.path.join(d, name))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return {"ok": True}
 
 
 class Socket:
@@ -447,6 +531,11 @@ ws_lock = threading.Lock()
 
 
 def op_ws_open(msg):
+    # The token rides in the URL: only ever to a Slack host.
+    u = urllib.parse.urlsplit(msg.get("url") or "")
+    if u.scheme != "wss" or not is_slack(u.hostname):
+        emit({"ws": "closed", "reason": "connect: not a slack.com socket"})
+        return None
     with ws_lock:
         old = ws["cur"]
         if old:
@@ -527,6 +616,14 @@ def main():
             op_ws_send(msg)
         elif op == "ws_close":
             op_ws_close(msg)
+        elif op == "write_private":
+            # Here, in order: two saves in a row land in that order.
+            try:
+                res = op_write_private(msg)
+            except Exception as e:
+                res = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+            res["id"] = msg.get("id")
+            emit(res)
         elif op in OPS:
             run(pool, msg)
     op_ws_close({})

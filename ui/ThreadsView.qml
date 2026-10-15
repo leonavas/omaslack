@@ -258,6 +258,7 @@ Rectangle {
                   Text {
                     id: titleText
                     text: tv.ws.convLabel(cardItem.conv) || cardItem.conv
+                    textFormat: Text.PlainText
                     color: cardItem.modelData.unread ? tv.t.fgBright : tv.t.fg
                     font.family: tv.t.font
                     font.pixelSize: tv.t.fsTitle - 1
@@ -278,6 +279,7 @@ Rectangle {
                 Text {
                   width: parent.width
                   text: tv.peopleLine(cardItem.rootMsg || cardItem.card.root, cardItem.card.people)
+                  textFormat: Text.PlainText
                   color: tv.t.fgDim
                   font.family: tv.t.font
                   font.pixelSize: tv.t.fsSmall

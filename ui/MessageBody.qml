@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Ui
 import "../lib/Registry.js" as Reg
+import "../lib/Util.js" as U
 
 // A message's body parts (lib/Mrkdwn.js): rich text, quotes, code blocks,
 // Block Kit (headers, sections, context, images, buttons, dividers) and
@@ -27,15 +28,24 @@ Column {
     body.app.openUrl(url)
   }
 
+  function hostOf(url) { return ((String(url || "").match(/^https?:\/\/([^\/:?#]+)/i) || [])[1] || "").toLowerCase() }
+  // Pictures from other sites (link previews, apps' images) load straight
+  // from them, so they only show while Preferences lets them
+  // (app.previewImages); Slack's own (files, emoji, its image proxy) always.
+  function shows(url) {
+    if (!url) return false
+    return body.app.previewImages || /(^|\.)(slack\.com|slack-edge\.com|slack-imgs\.com)$/.test(body.hostOf(url))
+  }
+
   function imageSource(url) {
     if (!url) return ""
-    var host = (url.match(/^https?:\/\/([^\/]+)/) || [])[1] || ""
+    var host = body.hostOf(url)
     if (host === "slack.com" || /\.slack\.com$/.test(host)) {
       var local = body.ws.localFile(url)
       if (!local) Qt.callLater(function() { body.ws.fetchFile(url, "image") })
       return local ? "file://" + local : ""
     }
-    return url
+    return body.shows(url) ? url : ""
   }
 
   Repeater {
@@ -158,7 +168,7 @@ Column {
       }
       Loader {
         id: acc
-        visible: !!parent.p.accessory
+        visible: !!parent.p.accessory && (parent.p.accessory.kind !== "image" || body.shows(parent.p.accessory.url))
         anchors.right: parent.right
         width: item ? item.width : 0
         height: item ? item.height : 0
@@ -195,6 +205,7 @@ Column {
         model: parent.p.images
         delegate: Image {
           required property var modelData
+          visible: body.shows(modelData)
           width: body.t.sp(16); height: width
           source: body.imageSource(modelData)
           fillMode: Image.PreserveAspectFit
@@ -222,8 +233,9 @@ Column {
     Column {
       readonly property var p: parent.modelData
       spacing: body.t.sp(4)
-      Text { visible: parent.p.title !== ""; text: parent.p.title; color: body.t.fgDim; font.family: body.t.font; font.pixelSize: body.t.fsSmall; width: parent.width; elide: Text.ElideRight }
+      Text { visible: parent.p.title !== ""; text: parent.p.title; textFormat: Text.PlainText; color: body.t.fgDim; font.family: body.t.font; font.pixelSize: body.t.fsSmall; width: parent.width; elide: Text.ElideRight }
       SlackImage {
+        visible: body.shows(parent.p.url)
         app: body.app
         source: body.imageSource(parent.p.url)
         natW: parent.p.w
@@ -262,7 +274,7 @@ Column {
       RichText {
         app: body.app
         width: Math.min(implicitWidth, body.width - body.t.sp(30))
-        html: "<a href=\"" + parent.p.url + "\">" + (parent.p.title || parent.p.url) + "</a>"
+        html: "<a href=\"" + U.escapeHtml(parent.p.url) + "\">" + U.escapeHtml(parent.p.title || parent.p.url) + "</a>"
         onLink: url => body.link(url)
       }
     }

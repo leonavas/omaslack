@@ -146,6 +146,7 @@ DialogFrame {
       width: parent.width
       wrapMode: Text.Wrap
       text: "󰗖  " + d.error
+      textFormat: Text.PlainText
       color: d.t.red
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall

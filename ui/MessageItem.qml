@@ -184,7 +184,7 @@ Item {
           spacing: m.t.sp(6)
           height: visible ? implicitHeight + m.t.sp(2) : 0
           Glyph { app: m.app; icon: "󰐃"; color: m.t.yellow; size: m.t.fsSmall }
-          Text { text: m.pinnedLabel(); color: m.t.fgDim; font.family: m.t.font; font.pixelSize: m.t.fsSmall }
+          Text { text: m.pinnedLabel(); textFormat: Text.PlainText; color: m.t.fgDim; font.family: m.t.font; font.pixelSize: m.t.fsSmall }
         }
         Row {
           visible: !!m.msg && (m.msg.subtype === "thread_broadcast" || m.msg.broadcast === true) && !m.inThread
@@ -270,6 +270,7 @@ Item {
               Text {
                 id: nameText
                 text: m.authorName()
+                textFormat: Text.PlainText
                 color: m.t.fgBright
                 font.family: m.t.font
                 font.pixelSize: m.t.fsName
@@ -502,7 +503,7 @@ Item {
     var c = m.ws.conv(m.conv)
     var segs = Model.membershipSentence(m.row.run, { lang: m.app.lang, chanName: c && !Model.isDm(c) ? c.name : "", chanPrivate: c && c.kind === "private" })
     var html = segs.map(function(s) {
-      if (s.user) return "<a href=\"slackqs://user/" + s.user + "\" style=\"color:" + m.t.html.dim + ";text-decoration:none;\"><b>" + U.escapeHtml((s.at ? "@" : "") + (m.ws.userName(s.user) || s.user)) + "</b></a>"
+      if (s.user) return "<a href=\"slackqs://user/" + U.escapeHtml(s.user) + "\" style=\"color:" + m.t.html.dim + ";text-decoration:none;\"><b>" + U.escapeHtml((s.at ? "@" : "") + (m.ws.userName(s.user) || s.user)) + "</b></a>"
       return U.escapeHtml(s.text)
     }).join("")
     return html + "&nbsp;&nbsp;<span style=\"font-size:" + m.t.fsTiny + "px;\">" + U.tsTime(m.row.run[0].ts, m.app.clock24) + "</span>"

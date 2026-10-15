@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Ui
 import "../lib/Registry.js" as Reg
+import "../lib/Util.js" as U
 
 // A legacy attachment (or link unfurl, or shared message): a colored bar
 // and, beside it, the service, author, title, text, fields, image, footer.
@@ -36,15 +37,17 @@ Row {
     Row {
       visible: !!av.att && (av.att.service !== "" || av.att.author !== "")
       spacing: av.t ? av.t.sp(6) : 6
+      // Pictures from other sites only while Preferences lets them (MessageBody.shows).
       Image {
-        visible: !!av.att && (av.att.serviceIcon || av.att.authorIcon) !== ""
-        source: av.att ? (av.att.authorIcon || av.att.serviceIcon || "") : ""
+        visible: !!av.att && (av.att.serviceIcon || av.att.authorIcon) !== "" && inner.shows(av.att.authorIcon || av.att.serviceIcon)
+        source: visible ? (av.att.authorIcon || av.att.serviceIcon || "") : ""
         width: av.t ? av.t.sp(16) : 16; height: width
         asynchronous: true
         anchors.verticalCenter: parent.verticalCenter
       }
       Text {
         text: av.att ? (av.att.author || av.att.service) : ""
+        textFormat: Text.PlainText
         color: av.t ? av.t.fg : "white"
         font.family: av.t ? av.t.font : "monospace"
         font.pixelSize: av.t ? av.t.fsSmall + 1 : 12
@@ -56,7 +59,7 @@ Row {
       visible: !!av.att && av.att.title !== ""
       width: parent.width
       app: av.app
-      html: !av.att ? "" : (av.att.titleLink && av.att.title.indexOf("<a ") < 0 ? "<a href=\"" + av.att.titleLink + "\" style=\"color:" + av.t.html.link + ";text-decoration:none;\"><b>" + av.att.title + "</b></a>" : "<b>" + av.att.title + "</b>")
+      html: !av.att ? "" : (av.att.titleLink && av.att.title.indexOf("<a ") < 0 ? "<a href=\"" + U.escapeHtml(av.att.titleLink) + "\" style=\"color:" + av.t.html.link + ";text-decoration:none;\"><b>" + av.att.title + "</b></a>" : "<b>" + av.att.title + "</b>")
       onLink: url => av.linkHandler(url)
     }
     Item {
@@ -74,7 +77,7 @@ Row {
       }
       Image {
         id: thumb
-        visible: !!av.att && av.att.thumb !== "" && !av.att.image
+        visible: !!av.att && av.att.thumb !== "" && !av.att.image && inner.shows(av.att.thumb)
         anchors.right: parent.right
         width: av.t ? av.t.sp(72) : 72; height: width
         source: visible ? av.att.thumb : ""
@@ -99,13 +102,13 @@ Row {
       }
     }
     SlackImage {
-      visible: !!av.att && !!av.att.image
+      visible: !!av.att && !!av.att.image && inner.shows(av.att.image.url)
       app: av.app
       source: av.att && av.att.image ? av.imageSource(av.att.image.url) : ""
       natW: av.att && av.att.image ? av.att.image.w : 0
       natH: av.att && av.att.image ? av.att.image.h : 0
       maxW: Math.min(col.width, av.t.sp(400))
-      onOpen: av.win.viewImage({ name: av.att.title || "image", full: av.att.image.url, thumb: av.att.image.url, w: av.att.image.w, h: av.att.image.h, external: true })
+      onOpen: av.win.viewImage({ name: av.att.titleText || "image", full: av.att.image.url, thumb: av.att.image.url, w: av.att.image.w, h: av.att.image.h, external: true })
     }
     Flow {
       visible: !!av.att && av.att.actions.length > 0

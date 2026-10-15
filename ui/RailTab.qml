@@ -61,6 +61,7 @@ Item {
     anchors.top: sq.bottom
     anchors.topMargin: tab.t.sp(2)
     text: tab.label
+    textFormat: Text.PlainText
     color: tab.t.fgBright
     opacity: tab.active || ma.containsMouse ? 1 : 0.85
     font.family: tab.t.font

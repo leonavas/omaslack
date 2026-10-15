@@ -598,6 +598,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         text: p.app.tr("No emoji found for “", "Nenhum emoji encontrado para “") + p.query + "”"
+        textFormat: Text.PlainText
         color: p.t.fgDim
         font.family: p.t.font
         font.pixelSize: p.t.fsSmall + 1
@@ -662,6 +663,7 @@ Item {
           width: parent.width
           elide: Text.ElideRight
           text: foot.it ? ":" + foot.it.name + ":" : p.app.tr("Pick an emoji", "Escolha um emoji")
+          textFormat: Text.PlainText
           color: foot.it ? p.t.fgBright : p.t.fgSoft
           font.family: p.t.font
           font.pixelSize: p.t.fsText

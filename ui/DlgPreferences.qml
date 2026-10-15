@@ -62,7 +62,7 @@ DialogFrame {
     d.closed()
     win.dialog("confirm", {
       title: a.tr("Sign out of ", "Sair de ") + name + "?",
-      text: a.tr("This app forgets the session. Slack in your browser stays signed in.", "Este app esquece a sessão. O Slack no navegador continua conectado."),
+      text: a.tr("This app forgets the session, with this workspace's drafts and cached files. Slack in your browser stays signed in.", "Este app esquece a sessão, com os rascunhos e arquivos em cache deste workspace. O Slack no navegador continua conectado."),
       confirm: a.tr("Sign out", "Sair"), danger: true,
       action: function() { a.signOut(team) }
     })
@@ -227,7 +227,7 @@ DialogFrame {
             anchors.rightMargin: d.t.sp(12)
             anchors.verticalCenter: parent.verticalCenter
             spacing: 1
-            Text { width: parent.width; text: modelData.team.name || modelData.team.domain || ""; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; elide: Text.ElideRight }
+            Text { width: parent.width; text: modelData.team.name || modelData.team.domain || ""; textFormat: Text.PlainText; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; elide: Text.ElideRight }
             Text { width: parent.width; text: d.levelLabel(modelData); color: d.t.fgDim; font.family: d.t.font; font.pixelSize: d.t.fsSmall; elide: Text.ElideRight }
           }
           SButton {
@@ -361,6 +361,19 @@ DialogFrame {
                        "Negrito, itálico, listas, código… acima do que você digita. O botão Aa na caixa também mostra e esconde.")
         checked: d.app.setting("composerToolbar", true) !== false
         onToggled: on => d.app.setSetting("composerToolbar", on)
+      }
+      Item { width: 1; height: d.t.sp(4) }
+      // Third-party pictures in messages (MessageBody.shows), as Slack's
+      // "Show images and files from linked websites".
+      Text { text: d.app.tr("Link previews", "Prévias de links"); color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsTitle; font.bold: true }
+      Switch2 {
+        app: d.app
+        width: parent.width
+        text: d.app.tr("Load images from link previews", "Carregar imagens de prévias de links")
+        hint: d.app.tr("Pictures in link previews and apps' messages come straight from other sites, which see your connection. Off, previews show without them; Slack's own pictures still load.",
+                       "As imagens de prévias de links e de mensagens de apps vêm direto de outros sites, que veem sua conexão. Desligado, as prévias aparecem sem elas; as imagens do próprio Slack continuam.")
+        checked: d.app.previewImages
+        onToggled: on => d.app.setSetting("previewImages", on)
       }
     }
   }
@@ -518,6 +531,7 @@ DialogFrame {
               anchors.centerIn: parent
               visible: teamImg.status !== Image.Ready
               text: U.initials(w.team.name || "?")
+              textFormat: Text.PlainText
               color: "white"
               font.family: d.t.font
               font.pixelSize: d.t.fsText
@@ -542,7 +556,7 @@ DialogFrame {
             spacing: 2
             Row {
               spacing: d.t.sp(8)
-              Text { text: w.team.name || w.team.domain || w.teamId; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText; font.bold: true }
+              Text { text: w.team.name || w.team.domain || w.teamId; textFormat: Text.PlainText; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText; font.bold: true }
               Rectangle {
                 visible: w === d.app.current
                 anchors.verticalCenter: parent.verticalCenter
@@ -557,6 +571,7 @@ DialogFrame {
               width: parent.width
               elide: Text.ElideRight
               text: (w.team.domain ? w.team.domain + ".slack.com" : "") + (w.me && w.me.name ? "  ·  @" + (w.me.handle || w.me.name) : "") + (index < 9 ? "  ·  Ctrl+" + (index + 1) : "")
+              textFormat: Text.PlainText
               color: d.t.fgDim
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -606,6 +621,22 @@ DialogFrame {
           }
           SButton { id: openBtn; app: d.app; small: true; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; icon: "󰉋"; text: d.app.tr("Open", "Abrir"); onClicked: Qt.openUrlExternally("file://" + modelData.path) }
         }
+      }
+
+      Item { width: 1; height: d.t.sp(6) }
+      Rectangle { width: parent.width; height: 1; color: d.t.line }
+      Item { width: 1; height: d.t.sp(2) }
+
+      // New versions of the plugin (core/Updater.qml); the menu's check works either way.
+      Text { text: d.app.tr("Updates", "Atualizações"); color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsTitle; font.bold: true }
+      Switch2 {
+        app: d.app
+        width: parent.width
+        text: d.app.tr("Check for updates", "Verificar atualizações")
+        hint: d.app.tr("Looks on GitHub for a new version of Omaslack a little after start-up and every six hours. Off, it only looks when you ask, from your menu.",
+                       "Procura no GitHub uma versão nova do Omaslack logo depois de iniciar e a cada seis horas. Desligado, só procura quando você pede, pelo seu menu.")
+        checked: d.app.setting("checkUpdates", true) !== false
+        onToggled: on => d.app.setSetting("checkUpdates", on)
       }
     }
   }

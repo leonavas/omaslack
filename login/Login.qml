@@ -7,11 +7,13 @@ import QtWebEngine
 // shell). Once the person is in, it prints the session it found and quits;
 // the browser profile keeps the HttpOnly `d` cookie on disk for the plugin.
 //
-//   qml Login.qml -- <profile dir> <known team ids,…> <lang> <workspace or ""> [cache dir]
+//   qml Login.qml -- <profile dir> <known team ids,…> <lang> <workspace or ""> [cache dir] [user agent]
 //
 // The HTTP cache goes to <cache dir> (Qt's default is under
 // ~/.cache/<app>/QtWebEngine/), which the plugin empties once the window
-// is gone; the profile keeps cookies and storage.
+// is gone; the profile keeps cookies and storage. <user agent> is the
+// plugin's (lib/Util.js chromeUa); plain QML has no way to read the
+// environment.
 Window {
   id: win
   width: 540
@@ -29,6 +31,7 @@ Window {
   readonly property bool pt: String(args[2] || "").indexOf("pt") === 0
   readonly property string workspace: String(args[3] || "").replace(/[^A-Za-z0-9-]/g, "")
   readonly property string cacheDir: String(args[4] || "")
+  readonly property string givenUa: String(args[5] || "").replace(/[^\x20-\x7e]/g, "").trim()
   property bool done: false
 
   title: pt ? "Entrar no Slack" : "Sign in to Slack"
@@ -38,6 +41,18 @@ Window {
 
   function status(s) { console.log("SLACKQS-STATUS " + s) }
 
+  function chromeMajor(ua) { var m = String(ua).match(/Chrome\/(\d+)/); return m ? parseInt(m[1], 10) : 0 }
+  // A current desktop Chrome, since Slack's sign-in page turns away
+  // browsers it thinks are old (QtWebEngine's own says Chrome 140 and
+  // QtWebEngine/x.y.z): the plugin's, never older than the engine itself;
+  // without one, the engine's own less its QtWebEngine token.
+  function userAgent(engine) {
+    var own = String(engine).replace(/QtWebEngine\/\S+\s*/, "")
+    if (!win.givenUa) return own
+    var major = win.chromeMajor(own)
+    return win.chromeMajor(win.givenUa) >= major ? win.givenUa : win.givenUa.replace(/Chrome\/\d+/, "Chrome/" + major)
+  }
+
   WebEngineProfilePrototype {
     id: proto
     storageName: "omaslack"
@@ -45,7 +60,20 @@ Window {
     // Empty: Qt's default.
     cachePath: win.cacheDir
     persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-    Component.onCompleted: loader.active = true
+    Component.onCompleted: {
+      // Before the page exists, so its first request already says so.
+      var p = proto.instance()
+      p.httpUserAgent = win.userAgent(p.httpUserAgent)
+      // The client hints (Sec-CH-UA-Full-Version*, userAgentData) tell the
+      // same version.
+      var major = win.chromeMajor(p.httpUserAgent)
+      if (major > 0) {
+        var v = major + ".0.0.0"
+        p.clientHints.fullVersion = v
+        p.clientHints.fullVersionList = { "Google Chrome": v, "Chromium": v, "Not_A Brand": "24.0.0.0" }
+      }
+      loader.active = true
+    }
   }
 
   Loader {
@@ -67,7 +95,12 @@ Window {
         var m = u.match(/team=(T[A-Z0-9]+)/)
         view.url = m ? "https://app.slack.com/client/" + m[1] : "https://app.slack.com/client"
       }
-      onNewWindowRequested: function(request) { view.url = request.requestedUrl }
+      // A popup opens here instead, and only a web page (no file:, data: or
+      // other schemes).
+      onNewWindowRequested: function(request) {
+        var u = String(request.requestedUrl)
+        if (/^https?:\/\//i.test(u)) view.url = u
+      }
       onUrlChanged: {
         var u = String(view.url)
         // After signing in Slack lands on /ssb/redirect, which wants the
@@ -86,6 +119,7 @@ Window {
   }
 
   // On the web client, the session is in localStorage (localConfig_v2).
+  // Only the one taken is printed: its token and team, no other team's.
   Timer {
     interval: 1000
     repeat: true
@@ -99,7 +133,7 @@ Window {
         "var all=Object.keys(cfg.teams).map(function(k){return cfg.teams[k]}).filter(function(t){return t&&t.id&&t.token});" +
         "var fresh=all.filter(function(t){return known.indexOf(t.id)<0});var named=m&&cfg.teams[m[1]];" +
         "var team=(named&&known.indexOf(named.id)<0?named:null)||(fresh.length===1?fresh[0]:null);if(!team||!team.token)return '';" +
-        "return JSON.stringify({token:team.token,team:team.id,teams:all.map(function(t){return {id:t.id,name:t.name||'',domain:t.domain||'',token:t.token}})})}catch(e){return ''}})()",
+        "return JSON.stringify({token:team.token,team:team.id})}catch(e){return ''}})()",
         function(result) {
           if (!result || win.done) return
           win.done = true

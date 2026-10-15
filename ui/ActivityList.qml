@@ -505,6 +505,7 @@ Rectangle {
             id: whoText
             width: Math.min(implicitWidth, parent.width - whenText.implicitWidth - al.t.sp(8))
             text: row.modelData.who || ""
+            textFormat: Text.PlainText
             color: row.ink
             font.family: al.t.font
             font.pixelSize: al.t.fsSmall + 1
@@ -548,6 +549,7 @@ Rectangle {
           Text {
             width: parent.width - al.t.sp(20)
             text: row.modelData.where || ""
+            textFormat: Text.PlainText
             color: row.soft
             font.family: al.t.font
             font.pixelSize: al.t.fsTiny

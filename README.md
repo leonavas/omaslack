@@ -1,10 +1,12 @@
 ![Omaslack](docs/cover.png)
 
+This is the app I use every day for work. My company adopted Slack as its main communication tool, so for every little detail I see out of tune, expect a fix.
+
 # Omaslack
 
-**A full Slack client that lives inside the Omarchy shell, drawn in your theme's colors, with a bar widget that badges what's waiting.**
+**An unofficial Slack client that lives inside the Omarchy shell, drawn in your theme's colors, with a bar widget that badges what's waiting.**
 
-Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quickshell), with a small Python helper for the network. It shows up as Slack's mark in the Omarchy bar. Click it and a window opens with Slack's familiar layout: the workspace rail, sidebar sections, conversations, threads and profiles, all in the current Omarchy theme. Inside the app it's simply called "Slack".
+Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quickshell), with a small Python helper for the network. It shows up as Slack's mark in the Omarchy bar. Click it and a window opens with Slack's familiar layout: the workspace rail, sidebar sections, conversations, threads and profiles, all in the current Omarchy theme. Inside the app it's simply called "Slack". It is not affiliated with or endorsed by Slack (see [Credits and disclaimer](#credits-and-disclaimer)).
 
 ## Features
 
@@ -66,31 +68,112 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 omarchy plugin add https://github.com/leonavas/omaslack --enable
 ```
 
-Or from your own checkout:
+That's all. On a stock Omarchy it works right after install, with no extra packages and no manual setup: Slack's mark shows up in the bar, and you sign in from inside the app (see [How sign-in works](#how-sign-in-works)). To add more workspaces, click the workspace icon in the rail and choose **Add a workspace**.
+
+### Requirements
+
+Nothing beyond what ships with Omarchy. The network helper is Python using only its standard library, and everything else it calls is already on the system:
+
+| Tool | What it's for |
+|---|---|
+| `python3` | HTTPS and the websocket to Slack (`lib/transport.py`, standard library only) |
+| Qt's QML runtime, with QtWebEngine | The app itself, and the sign-in window |
+| `curl` | Profile photos and the update check |
+| `jq` | Reading Hyprland's state in a small shell helper |
+| `notify-send` | Desktop notifications |
+| `wl-clipboard` | Copying, and pasting images into the composer |
+| `xdg-open` | Opening links and downloaded files |
+| `omarchy-file-select` | Choosing files to attach and a profile photo |
+| `pw-play` | The notification sound |
+| `hyprctl` | Parking the window in the scratchpad and bringing it back |
+
+If the sign-in window can't open, **Sign in with a token** works without it. Files are chosen with Omarchy's own chooser (`omarchy-file-select`); `zenity` is an optional fallback for when that one is missing or can't open.
+
+### Remove
 
 ```sh
-git clone https://github.com/leonavas/omaslack
-ln -s "$PWD/omaslack" ~/.config/omarchy/plugins/leonavas.omaslack
-omarchy-shell shell rescanPlugins
-omarchy plugin enable leonavas.omaslack --section right
+omarchy plugin remove omaslack
 ```
 
-**Requirements**: `python3` (network and websocket), `qt6-webengine` and Qt's `qml` runtime for the sign-in window, `curl`, `notify-send`, `wl-clipboard`, `zenity` (file picker), `xdg-open`, and `pw-play` (notification sound). Most of these ship with Omarchy.
+That removes the plugin but leaves your data. To delete that too (your sessions, preferences, drafts, caches and the sign-in window's profile):
 
-## Sign in
+```sh
+rm -rf ~/.config/omaslack ~/.cache/omaslack ~/.local/share/omaslack
+```
 
-- **Sign in with Slack** opens Slack's own sign-in page in a separate window. Once you're in, the session (the browser token and its `d` cookie) is saved to `~/.config/omaslack/accounts.json` (mode 600) and is only ever sent to Slack. The window's web cache is deleted when it closes. Its cookies stay, so the next sign-in skips the password.
-- **Sign in with a token** (the small link below the button) takes a `xoxc-…` token with its `xoxd-…` cookie, or a `xoxp-…` user token.
+If you set `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` or `XDG_DATA_HOME`, the folders are under those instead. Removing the files doesn't end your sessions on Slack's servers (see [Signing out](#signing-out)).
 
-To add more workspaces, click the workspace icon in the rail and choose **Add a workspace**.
+## How sign-in works
+
+- **Sign in with Slack** opens Slack's own sign-in page (`slack.com`, `<workspace>.slack.com`, `app.slack.com`) in a dedicated browser window with its own profile, kept in `~/.local/share/omaslack/webview`. You sign in there as you would in a browser, single sign-on included. Once you're in, Omaslack reads the session token (`xoxc-…`) from that window's local storage and the `d` cookie from that profile's own cookie database. It never looks at your browsers or at the Slack desktop app. The window's web cache is deleted when it closes; its cookies stay, so the next sign-in skips the password. The window runs with Chromium's sandbox on (`QTWEBENGINE_DISABLE_SANDBOX` is cleared for it); if it can't start on your system, sign in with a token instead.
+- **Sign in with a token** (the small link below the button) takes a `xoxc-…` token with its `xoxd-…` cookie, or a `xoxp-…` user token, pasted in by hand.
+
+Either way, the credentials are saved to `~/.config/omaslack/accounts.json` with mode 600, written in one step (a private temporary file renamed over it), so the file is never readable by others or left half-written. When the app starts, its config, cache and data folders are set to mode 700. The credentials are only ever sent to `slack.com` hosts.
+
+The sign-in window and the backend identify themselves to Slack as a current desktop Chrome (the version is computed from today's date), because Slack's pages refuse browsers it considers outdated.
+
+Omaslack acts as Slack's web client: it talks to Slack with your own session, through the internal APIs Slack's web app uses, not the public bot API. Your workspace's policy may not allow third-party clients, so check with your admin before using it on a work account. Omaslack is not affiliated with or endorsed by Slack.
+
+## Network
+
+Every host Omaslack connects to:
+
+| Host | Why |
+|---|---|
+| `slack.com/api` | Slack's Web API, with your session |
+| `slack.com`, `<workspace>.slack.com`, `app.slack.com` | Sign-in (the sign-in window only) |
+| `wss-*.slack.com` | Slack's websocket, for real-time updates |
+| `files.slack.com` and Slack's upload URLs | Files and images you open, download, upload or paste |
+| `a.slack-edge.com`, `emoji.slack-edge.com` and Slack's avatar CDNs (`*.slack-edge.com`, `secure.gravatar.com`) | Emoji images, custom emoji, profile photos and workspace icons |
+| Your SSO provider | Only if your workspace signs in through one, inside the sign-in window |
+| Third-party hosts in messages | Images in link previews, Block Kit and attachments load straight from their own sites, which see your connection. Turn off **Load images from link previews** (Preferences → Messages & media) and only Slack's own images load (`slack.com`, `slack-edge.com` and its image proxy `slack-imgs.com`) |
+| `raw.githubusercontent.com/leonavas/omaslack` | The update check (one plain file; **Check for updates** in Preferences → Advanced turns it off) |
+| `github.com` | Only when you start an update: Omarchy fetches the new version and shows its changes before you confirm |
+
+Your credentials only go to `slack.com` and its subdomains; requests to every other host carry none. There's no telemetry and no analytics, and nothing is downloaded to run: no binaries, no packages.
+
+## Data stored
+
+| Path | Contents |
+|---|---|
+| `~/.config/omaslack/accounts.json` | Your credentials (tokens and cookies), mode 600, replaced in one step on every save |
+| `~/.config/omaslack/settings.json` | Preferences, drafts, recently sent messages and the last conversation you had open |
+| `~/.cache/omaslack/team-<id>.json` | Per workspace: recent messages of your recent conversations and the user directory, so the app starts fast |
+| `~/.cache/omaslack/files/<team>/` | Images and files fetched with your session |
+| `~/.cache/omaslack/files/avatars/` | Profile photos and workspace icons |
+| `~/.cache/omaslack/paste/` | Images you pasted into the composer |
+| `~/.cache/omaslack/webview/` | The sign-in window's web cache, deleted when the window closes |
+| `~/.local/share/omaslack/webview/` | The sign-in window's browser profile (cookies and storage, so the next sign-in skips the password) |
+| `$XDG_RUNTIME_DIR/omaslack-update.*` | How the last update went, read back once the shell restarts |
+| `~/Downloads` (or `$XDG_DOWNLOAD_DIR`) | Files you download. Nothing there is overwritten: a name already taken becomes `name (1).ext`, `name (2).ext`… |
+
+Cached files and photos unused for 7 days, and pasted images older than 7 days, are deleted. The config, cache and data folders are set to mode 700 when the app starts. The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`) are respected. Preferences → Advanced opens these folders.
+
+## Links and files
+
+- Links in messages open in your browser only when they're web pages or mail (`http`, `https`, `mailto`). Slack permalinks to the workspace you're in open in the app. Any other kind of link (`file:`, other apps' schemes) isn't opened.
+- A received file opens in its default app, except one that could run programs (scripts, `.desktop` launchers, executables, or anything marked executable): for those, its folder opens instead.
+- Downloads never overwrite a file already in your downloads folder (see [Data stored](#data-stored)).
+
+## Signing out
+
+Signing out of a workspace deletes, on this computer:
+
+- that account's credentials, from `accounts.json`;
+- its cache file (`~/.cache/omaslack/team-<id>.json`) and its cached files (`~/.cache/omaslack/files/<team>/`);
+- its drafts, recently sent messages, last conversation and collapsed sections, from `settings.json`.
+
+Signing out of the last workspace also deletes the sign-in window's browser profile (`~/.local/share/omaslack/webview`) and its cache (`~/.cache/omaslack/webview`), so the next sign-in starts from scratch.
+
+It does not end the session on Slack's servers: do that from your account settings in Slack.
 
 ## Settings
 
-- **App preferences** (Ctrl+, or the menu): notifications, sound and message preview, sidebar look, workspaces stacked or expanded, clock, spacing, emoji style, the formatting toolbar, language, zoom, your workspaces, and where the app keeps its data.
+- **App preferences** (Ctrl+, or the menu): notifications, sound and message preview, sidebar look, workspaces stacked or expanded, clock, spacing, emoji style, the formatting toolbar, images from link previews, language, zoom, update checks, your workspaces, and where the app keeps its data.
 - **Bar widget settings** are in the shell's widget settings panel. You can also set them inline on the widget's entry in `~/.config/omarchy/shell.json`, for example:
 
   ```json
-  { "id": "leonavas.omaslack", "badgeLayout": "Combined", "previewMessages": 5 }
+  { "id": "omaslack", "badgeLayout": "Combined", "previewMessages": 5 }
   ```
 
   The available keys are listed in [`manifest.json`](manifest.json) (`barWidget.schema`): icon style, badge layout and colors, what the channel badge counts, hide mode and special workspace, auto start, hover preview size, threads, reactions, notifications, and the paused indicator.
@@ -115,36 +198,22 @@ quickshell ipc -p "$OMARCHY_PATH/shell" call omaslack <command> [args]
 
 ## Updates
 
-Omaslack checks the `manifest.json` on GitHub's `main` branch a little after start-up and every 6 hours. Only that plain file is fetched, and nothing of yours is sent. When a newer version exists, a green button shows over your photo in the rail. **Check for updates** in your account menu does the same check on demand.
+Omaslack checks the `manifest.json` on GitHub's `main` branch (`raw.githubusercontent.com/leonavas/omaslack`) a little after start-up and every 6 hours. Only that plain file is fetched, and nothing of yours is sent. The automatic check is on by default; **Check for updates** in Preferences → Advanced turns it off. **Check for updates** in your account menu checks on demand either way. When a newer version exists, a green button shows over your photo in the rail.
 
-Clicking it (or **Update to …** in your account menu or in About) opens the same floating terminal Omarchy uses for its own update. It shows the current and the new version and the exact command it will run, then asks before running it:
+Nothing is updated until you confirm. Clicking the button (or **Update to …** in your account menu or in About) opens the same floating terminal Omarchy uses for its own update. It shows the current and the new version, a **What's new** link to the [releases page](https://github.com/leonavas/omaslack/releases), and the exact command it will run: `omarchy plugin update omaslack`, Omarchy's own plugin update, which shows the changes and asks you to confirm. Say no (or close the terminal) and nothing changes. Say yes and it runs with its output in view, followed by a line saying whether it worked; a failure changes nothing. Once it updated, the whole shell restarts with `omarchy-restart-shell`, as Omarchy's own update ends; the new copy brings the window back and tells you how it went. Press any key to close the terminal.
 
-- **Installed with `omarchy plugin add`**: `omarchy plugin update <id> --yes`.
-- **Your own checkout** (a symlink in Omarchy's plugin folder, or a git clone somewhere else): `git -C <folder> pull --ff-only`.
+The screen is `lib/update.sh`. It falls back to `xdg-terminal-exec` or `$TERMINAL` when Omarchy's terminal helper is missing. A development checkout updates with `git pull --ff-only` instead, after a confirm of its own (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).
 
-Say no and the terminal closes. Say yes and the command runs with its output in view, followed by a line saying whether it worked. A failure, such as local changes in the way or a branch that can't fast-forward, shows git's message and changes nothing. Once it updated, the whole shell restarts with `omarchy-restart-shell`, as Omarchy's own update ends (a plugin rescan would keep the old QML); the terminal stays open, and the new copy brings the window back and tells you how it went. Press any key to close the terminal. A copy that isn't in git can't be updated from the app; the button tells you where to get the new version.
+## Environment variables
 
-The screen is `lib/update.sh`. It falls back to `xdg-terminal-exec` or `$TERMINAL` and a plain y/N prompt when Omarchy's helpers or `gum` are missing.
-
-## Data and cache
-
-| Path | Contents |
+| Variable | What it does |
 |---|---|
-| `~/.config/omaslack/accounts.json` | Your sessions (tokens and cookies), mode 600 |
-| `~/.config/omaslack/settings.json` | App preferences |
-| `~/.cache/omaslack/team-<id>.json` | Per-workspace cache, so the app starts fast |
-| `~/.cache/omaslack/files/` | Images, avatars and files fetched with your session. Anything unused for a week is deleted |
-| `~/.local/share/omaslack/webview/` | The sign-in window's profile (cookies, so the next sign-in skips the password) |
-| `~/Downloads` (or `$XDG_DOWNLOAD_DIR`) | Files you download |
+| `SLACKQS_DEMO=1` | Demo mode: the app runs against a pretend workspace with made-up data (`lib/Demo.js`), and nothing reaches Slack |
+| `SLACKQS_OPEN=1` | Opens the window as soon as the shell starts |
+| `SLACKQS_READONLY=1` | Only lets read methods reach Slack, for development against a real workspace |
+| `SLACKQS_UPDATE_DEV=1` | Treats whatever is on GitHub as newer, to see the update button |
 
-The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`) are respected. When you sign out of a workspace, its session and its workspace cache are removed. Preferences → Advanced opens these folders.
-
-## Development
-
-- `SLACKQS_DEMO=1` runs the app against a pretend workspace (`lib/Demo.js`), so no sign-in is needed.
-- `SLACKQS_READONLY=1` only lets read methods reach Slack, for working against a real workspace safely.
-- `SLACKQS_UPDATE_DEV=1` treats whatever is on GitHub as newer, so you can see the update button.
-- `bash lib/update.sh run --dry-run --mode=checkout --folder=. --from=0.2.0 --to=0.3.0` shows the update screen in your current terminal without running anything.
+Working on Omaslack itself is described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Notes
 
@@ -155,6 +224,6 @@ The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`) are res
 
 Made by [leonavas](https://github.com/leonavas). Licensed under the [Apache License 2.0](LICENSE).
 
-Standard emoji names and order follow [iamcal/emoji-data](https://github.com/iamcal/emoji-data), the set Slack uses.
+Emoji images are loaded from Slack's CDN at runtime; none are bundled. The emoji metadata in `lib/EmojiData.js` (names, aliases, groups, order and skin tones) comes from [iamcal/emoji-data](https://github.com/iamcal/emoji-data), the set Slack uses, and [github/gemoji](https://github.com/github/gemoji), both under the MIT license (see [NOTICE](NOTICE)).
 
 Omaslack is an **unofficial** Slack client. It is not affiliated with, endorsed by or sponsored by Slack Technologies, LLC or Salesforce, Inc. "Slack" and the Slack logo are trademarks of Slack Technologies, LLC. Use it in line with your workspace's policies.

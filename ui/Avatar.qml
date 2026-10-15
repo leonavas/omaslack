@@ -78,6 +78,7 @@ Item {
       anchors.centerIn: parent
       visible: a.initialsUp
       text: U.initials(a.label)
+      textFormat: Text.PlainText
       color: "white"
       font.family: a.t.font
       font.pixelSize: Math.max(8, a.size * 0.38)

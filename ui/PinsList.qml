@@ -36,6 +36,7 @@ Item {
         x: pl.t.sp(16)
         y: pl.t.sp(8)
         text: "󰐃  " + (parent.modelData.by === pl.ws.me.id ? pl.app.tr("Pinned by you", "Fixada por você") : pl.app.tr("Pinned by ", "Fixada por ") + (pl.ws.userName(parent.modelData.by) || "?"))
+        textFormat: Text.PlainText
         color: pl.t.fgDim
         font.family: pl.t.font
         font.pixelSize: pl.t.fsTiny + 1

@@ -200,6 +200,7 @@ DialogFrame {
               Glyph { app: d.app; icon: chip.modelData.ok ? "󰇰" : "󰗖"; size: d.t.fsSmall + 1; color: chip.modelData.ok ? d.t.fgDim : d.t.red; anchors.verticalCenter: parent.verticalCenter }
               Text {
                 text: chip.modelData.email
+                textFormat: Text.PlainText
                 color: chip.modelData.ok ? d.t.fgBright : d.t.red
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText - 1
@@ -264,6 +265,7 @@ DialogFrame {
           width: parent.width
           wrapMode: Text.Wrap
           text: "󰗖  " + modelData.email + " " + modelData.why
+          textFormat: Text.PlainText
           color: d.t.red
           font.family: d.t.font
           font.pixelSize: d.t.fsSmall
@@ -313,7 +315,7 @@ DialogFrame {
               anchors.verticalCenter: parent.verticalCenter
               spacing: d.t.sp(5)
               Glyph { app: d.app; icon: cchip.c && cchip.c.kind === "private" ? "󰌾" : "#"; size: d.t.fsSmall + 1; color: d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
-              Text { text: cchip.c ? cchip.c.name : cchip.modelData; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+              Text { text: cchip.c ? cchip.c.name : cchip.modelData; textFormat: Text.PlainText; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
               Glyph { app: d.app; icon: "󰅖"; size: d.t.fsSmall; color: cchipMa.containsMouse ? d.t.fgBright : d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea { id: cchipMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: d.dropChannel(cchip.modelData) }
@@ -382,7 +384,7 @@ DialogFrame {
             spacing: d.t.sp(4)
             Glyph { app: d.app; icon: "󰐕"; size: d.t.fsSmall; color: d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
             Glyph { app: d.app; icon: pill.modelData.private ? "󰌾" : "#"; size: d.t.fsSmall; color: d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: pill.modelData.name; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsSmall; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: pill.modelData.name; textFormat: Text.PlainText; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsSmall; anchors.verticalCenter: parent.verticalCenter }
           }
           MouseArea { id: pillMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: d.addChannel(pill.index) }
         }
@@ -410,7 +412,7 @@ DialogFrame {
             anchors.verticalCenter: parent.verticalCenter
             spacing: d.t.sp(10)
             Glyph { app: d.app; width: d.t.sp(16); icon: copt.modelData.private ? "󰌾" : "#"; color: copt.hot ? d.t.onColor(d.t.accent) : d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: copt.modelData.name; color: copt.hot ? d.t.onColor(d.t.accent) : d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: copt.modelData.name; textFormat: Text.PlainText; color: copt.hot ? d.t.onColor(d.t.accent) : d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             Text {
               visible: copt.modelData.members > 0
               text: copt.modelData.members + d.app.tr(" members", " membros")
@@ -455,6 +457,7 @@ DialogFrame {
       width: parent.width
       wrapMode: Text.Wrap
       text: "󰗖  " + d.error
+      textFormat: Text.PlainText
       color: d.t.red
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall

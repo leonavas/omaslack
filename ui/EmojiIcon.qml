@@ -43,6 +43,7 @@ Item {
     visible: !e.useImage || img.status === Image.Error || img.status === Image.Loading && !!e.res && !!e.res.glyph
     width: e.size
     text: e.res ? (e.res.glyph || "") : "?"
+    textFormat: Text.PlainText
     horizontalAlignment: Text.AlignHCenter
     font.pixelSize: e.res && e.res.glyph ? Math.round(e.size * 0.85) : Math.max(8, Math.round(e.size * 0.6))
     font.bold: !e.res

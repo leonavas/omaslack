@@ -5,16 +5,17 @@ import Quickshell.Io
 // New versions of the plugin, looked for a little after start-up and every
 // six hours in the manifest on GitHub's main branch (raw.githubusercontent:
 // a plain file, no API and no rate limit; curl sends nothing of yours, the
-// Slack session only ever goes to Slack). Shown as the green button over
-// your photo (Rail.qml) and in your menu (DlgAccount.qml), as slick does by
-// your name. A click opens the update the way Omarchy shows its own, in its
-// floating terminal (lib/update.sh): both versions and the exact command,
-// `omarchy plugin update` for a clone Omarchy made (`omarchy plugin add`),
-// `git pull --ff-only` for a checkout of your own (a symlink in Omarchy's
-// plugin folder, or a clone anywhere else); a confirm, then its output.
-// Once it pulled, the whole shell restarts (as omarchy-update ends), and the
-// new copy brings the window back and says how it went. A copy outside git
-// only hears where to get it. Background checks are quiet; only the menu's
+// Slack session only ever goes to Slack), unless "Check for updates" is off
+// in Preferences (setting "checkUpdates"; the menu's check still looks).
+// Shown as the green button over your photo (Rail.qml) and in your menu
+// (DlgAccount.qml). A click opens the update the way Omarchy shows its own,
+// in its floating terminal (lib/update.sh): both versions and the exact
+// command, `omarchy plugin update` for a git folder in Omarchy's plugin
+// folder (what `omarchy plugin add` makes), which shows the changes and asks
+// itself, or `git pull --ff-only` for a checkout of this repo of your own,
+// after a confirm; then its output. Once it pulled, the whole shell
+// restarts (as omarchy-update ends), and the new copy brings the window
+// back and says how it went. A copy outside git only hears where to get it. Background checks are quiet; only the menu's
 // check reports errors.
 Item {
   id: u
@@ -27,7 +28,9 @@ Item {
   // Where an update leaves its note (.json), the pid of its terminal's run
   // (.pid), its output (.log) and exit code (.rc) for whichever copy of us
   // is running once it's done: the restart replaces this one in the middle.
-  readonly property string base: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omaslack-update"
+  // In the session's runtime folder, else the app's private cache
+  // (~/.cache/omaslack, made 700 at start-up and by lib/update.sh).
+  readonly property string base: (Quickshell.env("XDG_RUNTIME_DIR") || (u.app ? u.app.cacheDir : "")) + "/omaslack-update"
   readonly property string folderIn: { try { return u.app ? decodeURIComponent(u.app.pluginDir) : "" } catch (e) { return u.app.pluginDir } }
 
   // This copy's version: what the shell loaded, else the manifest on disk.
@@ -50,11 +53,12 @@ Item {
   property string phase: ""
   property bool checking: false  // a check asked for from the menu
 
-  // How this copy was installed: "omarchy" (a git clone in Omarchy's plugin
-  // folder, what `omarchy plugin add` makes and `omarchy plugin update`
-  // pulls), "checkout" (a symlink there, or a copy in a git repo elsewhere:
-  // `git pull` in it) or "other"; with the plugin's id (its folder's name,
-  // as Omarchy names it) and the folder to pull in.
+  // How this copy was installed: "omarchy" (a git folder in Omarchy's
+  // plugin folder, what `omarchy plugin add` makes and `omarchy plugin
+  // update` pulls), "checkout" (a clone of this repo of your own with the
+  // plugin at its top, linked there: `git pull` in it) or "other"; with the
+  // plugin's id (its folder's name, as Omarchy names it) and the folder to
+  // pull in.
   property string mode: ""
   property string pluginId: ""
   property string folder: ""
@@ -84,14 +88,20 @@ Item {
 
   // ---------------------------------------------------------------- where
   // A clone Omarchy made is a real folder in ~/.config/omarchy/plugins with
-  // its .git (the test `omarchy plugin update` makes); a symlink there is a
-  // working copy of your own, even when it's a git repo.
+  // its .git (the test `omarchy plugin update` makes). A working copy of
+  // your own (a symlink there) is pulled by itself only when the plugin's
+  // folder is the top of the repo and its origin is this repo on GitHub
+  // (https or ssh); any other git folder there goes through Omarchy too.
   Process {
     id: where
     command: ["sh", "-c",
       'd=${1%/}; id=${d##*/}; real=$(readlink -f -- "$d"); plugins=$(readlink -f -- "$HOME/.config/omarchy/plugins")\n' +
+      'origin=$(git -C "$real" remote get-url origin 2>/dev/null); origin=${origin%/}; origin=${origin%.git}\n' +
       'if [ ! -L "$d" ] && [ -d "$d/.git" ] && [ "$real" = "$plugins/$id" ]; then printf "omarchy\\t%s\\t%s\\n" "$id" "$real"\n' +
-      'elif top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null); then printf "checkout\\t%s\\t%s\\n" "$id" "$top"\n' +
+      'elif top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) && [ "$(readlink -f -- "$top")" = "$real" ] &&\n' +
+      '  case $origin in https://github.com/leonavas/omaslack | git@github.com:leonavas/omaslack | ssh://git@github.com/leonavas/omaslack) true ;; *) false ;; esac\n' +
+      'then printf "checkout\\t%s\\t%s\\n" "$id" "$real"\n' +
+      'elif [ -d "$plugins/$id/.git" ]; then printf "omarchy\\t%s\\t%s\\n" "$id" "$(readlink -f -- "$plugins/$id")"\n' +
       'else printf "other\\t%s\\t%s\\n" "$id" "$real"; fi',
       "where", u.folderIn]
     stdout: StdioCollector { id: whereOut; waitForEnd: true }
@@ -112,9 +122,11 @@ Item {
     onExited: code => u.fetched(code, String(fetchOut.text), String(fetchErr.text))
   }
 
-  // The first look once the app has settled, then every six hours.
-  Timer { interval: 20000; running: !!u.app; onTriggered: u.check(false) }
-  Timer { interval: 6 * 3600 * 1000; running: !!u.app; repeat: true; onTriggered: u.check(false) }
+  // The first look once the app has settled, then every six hours; none
+  // while "Check for updates" is off in Preferences.
+  readonly property bool autoCheck: !!u.app && u.app.settingsLoaded && u.app.setting("checkUpdates", true) !== false
+  Timer { interval: 20000; running: u.autoCheck; onTriggered: u.check(false) }
+  Timer { interval: 6 * 3600 * 1000; running: u.autoCheck; repeat: true; onTriggered: u.check(false) }
 
   // `manual`: from the menu, which hears back even when nothing is new.
   function check(manual) {
@@ -185,7 +197,7 @@ Item {
   // as after an update.
   function reload() {
     Quickshell.execDetached(["setsid", "-f", "sh", "-c",
-      'printf "%s\\n" "$2" >"$1.json"; : >"$1.log"; echo 0 >"$1.rc"\n' +
+      'mkdir -p -m 700 -- "${1%/*}"; printf "%s\\n" "$2" >"$1.json"; : >"$1.log"; echo 0 >"$1.rc"\n' +
       'command -v omarchy-shell >/dev/null 2>&1 || PATH=$PATH:${OMARCHY_PATH:-/usr/share/omarchy}/bin\n' +
       'if command -v omarchy-restart-shell >/dev/null 2>&1; then omarchy-restart-shell; else omarchy-shell shell rescanPlugins; fi',
       "omaslack-reload", u.base, u.note(u.latest)])

@@ -245,6 +245,7 @@ DialogFrame {
           }
           Text {
             text: d.dest ? d.dest.label : ""
+            textFormat: Text.PlainText
             color: d.t.fgBright
             font.family: d.t.font
             font.pixelSize: d.t.fsText - 1
@@ -349,6 +350,7 @@ DialogFrame {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: opt.modelData.label
+                textFormat: Text.PlainText
                 color: opt.hot ? d.t.onColor(d.t.accent) : d.t.fg
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText
@@ -359,6 +361,7 @@ DialogFrame {
               Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: opt.modelData.hint
+                textFormat: Text.PlainText
                 color: opt.hot ? d.t.alpha(d.t.onColor(d.t.accent), 0.75) : d.t.fgDim
                 font.family: d.t.font
                 font.pixelSize: d.t.fsSmall
@@ -441,6 +444,7 @@ DialogFrame {
           parts.push(U.shortStamp(d.msg.ts, d.app.lang, d.app.clock24))
           return parts.join("  ·  ")
         }
+        textFormat: Text.PlainText
         color: d.t.fgDim
         font.family: d.t.font
         font.pixelSize: d.t.fsSmall

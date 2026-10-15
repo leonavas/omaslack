@@ -83,6 +83,7 @@ Item {
       anchors.rightMargin: bar.t.sp(10)
       anchors.verticalCenter: parent.verticalCenter
       text: bar.app.tr("Search ", "Buscar em ") + (bar.ws ? bar.ws.team.name : "")
+      textFormat: Text.PlainText
       color: bar.t.alpha(bar.t.fgBright, 0.8)
       font.family: bar.t.font
       font.pixelSize: bar.t.fsSmall + 1

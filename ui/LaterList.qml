@@ -213,6 +213,7 @@ Rectangle {
             id: whereText
             width: parent.width - savedAt.implicitWidth - ll.t.sp(8)
             text: ll.whereOf(row.modelData.conv, row.c, row.msg)
+            textFormat: Text.PlainText
             color: row.soft
             font.family: ll.t.font
             font.pixelSize: ll.t.fsTiny + 1
@@ -231,6 +232,7 @@ Rectangle {
         Text {
           width: parent.width
           text: !row.msg ? "" : (ll.ws.author(row.msg).name || "?")
+          textFormat: Text.PlainText
           visible: !!row.msg
           color: row.ink
           font.family: ll.t.font

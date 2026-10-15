@@ -39,8 +39,8 @@ Column {
         anchors.rightMargin: c.t.sp(10)
         anchors.verticalCenter: parent.verticalCenter
         spacing: 2
-        Text { text: modelData.label; color: c.t.fg; font.family: c.t.font; font.pixelSize: c.t.fsText; width: parent.width; wrapMode: Text.Wrap }
-        Text { visible: !!modelData.hint; text: modelData.hint || ""; color: c.t.fgDim; font.family: c.t.font; font.pixelSize: c.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
+        Text { text: modelData.label; textFormat: Text.PlainText; color: c.t.fg; font.family: c.t.font; font.pixelSize: c.t.fsText; width: parent.width; wrapMode: Text.Wrap }
+        Text { visible: !!modelData.hint; text: modelData.hint || ""; textFormat: Text.PlainText; color: c.t.fgDim; font.family: c.t.font; font.pixelSize: c.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
       }
       MouseArea { id: ma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { c.value = modelData.value; c.picked(modelData.value) } }
     }

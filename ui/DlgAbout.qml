@@ -72,6 +72,7 @@ DialogFrame {
       text: !up ? "" : busy ? d.app.tr("Updating to ", "Atualizando para ") + up.latest + d.app.tr(" in the terminal…", " no terminal…")
             : up.phase === "updated" ? d.app.tr("Version ", "Versão ") + up.latest + d.app.tr(" is installed · reload to use it", " instalada · recarregue para usar")
             : d.app.tr("Version ", "Versão ") + up.latest + d.app.tr(" is available · update…", " disponível · atualizar…")
+      textFormat: Text.PlainText
       color: busy ? d.t.fgDim : d.t.green
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall
@@ -128,6 +129,7 @@ DialogFrame {
             anchors.centerIn: parent
             visible: teamImg.status !== Image.Ready
             text: U.initials(w.team.name || "?")
+            textFormat: Text.PlainText
             color: "white"
             font.family: d.t.font
             font.pixelSize: d.t.fsSmall
@@ -153,6 +155,7 @@ DialogFrame {
             width: parent.width
             elide: Text.ElideRight
             text: (w.team.name || w.team.domain || w.teamId) + (w.team.domain ? "  ·  " + w.team.domain + ".slack.com" : "")
+            textFormat: Text.PlainText
             color: d.t.fg
             font.family: d.t.font
             font.pixelSize: d.t.fsText - 1

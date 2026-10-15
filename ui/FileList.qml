@@ -33,6 +33,7 @@ Flow {
       spacing: fl.t.sp(4)
       Text {
         text: parent.f.name
+        textFormat: Text.PlainText
         color: fl.t.fgDim
         font.family: fl.t.font
         font.pixelSize: fl.t.fsSmall
@@ -79,9 +80,10 @@ Flow {
         anchors.rightMargin: fl.t.sp(6)
         anchors.verticalCenter: parent.verticalCenter
         spacing: 2
-        Text { text: parent.parent.f.title || parent.parent.f.name; color: fl.t.fgBright; font.family: fl.t.font; font.pixelSize: fl.t.fsText - 1; font.bold: true; width: parent.width; elide: Text.ElideMiddle }
+        Text { text: parent.parent.f.title || parent.parent.f.name; textFormat: Text.PlainText; color: fl.t.fgBright; font.family: fl.t.font; font.pixelSize: fl.t.fsText - 1; font.bold: true; width: parent.width; elide: Text.ElideMiddle }
         Text {
           text: (parent.parent.f.prettyType || (parent.parent.f.filetype || "").toUpperCase()) + (parent.parent.f.size ? "  ·  " + U.humanSize(parent.parent.f.size, fl.app.lang) : "")
+          textFormat: Text.PlainText
           color: fl.t.fgDim; font.family: fl.t.font; font.pixelSize: fl.t.fsSmall; width: parent.width; elide: Text.ElideRight
         }
       }
