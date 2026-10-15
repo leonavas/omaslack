@@ -269,6 +269,8 @@ Item {
         glyph: r.status && r.status.unicode ? EmojiLib.fromHex(r.status.unicode) : ""
         url: r.status ? r.status.url : ""
         size: r.t.fsSidebar + 2
+        HoverHandler { id: statusHover }
+        StatusTip { app: r.app; ws: r.ws; status: r.status; hovered: statusHover.hovered }
       }
     }
   }
@@ -365,7 +367,7 @@ Item {
   }
 
   PanelToolTip {
-    visible: ma.containsMouse && (r.narrow || label.truncated) && !r.isSection
+    visible: ma.containsMouse && (r.narrow || label.truncated) && !r.isSection && !statusHover.hovered
     text: r.row.kind === "add" ? label.text : (r.row.label || "") + (r.typingNames.length ? "  ·  " + r.typingNames.join(", ") + "…" : "")
   }
 

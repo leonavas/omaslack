@@ -1181,6 +1181,7 @@ Item {
                     name: pr.st ? pr.st.emoji.replace(/:/g, "") : ""
                     glyph: pr.st && pr.st.unicode ? Emoji.fromHex(pr.st.unicode) : ""
                     size: s.t.sp(16)
+                    StatusTip { app: s.app; ws: s.ws; status: pr.st; area: rowMa }
                   }
                   Text {
                     id: prReal
@@ -1684,6 +1685,8 @@ Item {
                   name: cp.st ? cp.st.emoji.replace(/:/g, "") : ""
                   glyph: cp.st && cp.st.unicode ? Emoji.fromHex(cp.st.unicode) : ""
                   size: s.t.sp(18)
+                  HoverHandler { id: cpStatusHover }
+                  StatusTip { app: s.app; ws: s.ws; status: cp.st; hovered: cpStatusHover.hovered }
                 }
               }
               Text {
@@ -1865,6 +1868,8 @@ Item {
                   name: pp.st ? pp.st.emoji.replace(/:/g, "") : ""
                   glyph: pp.st && pp.st.unicode ? Emoji.fromHex(pp.st.unicode) : ""
                   size: s.t.sp(20)
+                  HoverHandler { id: ppStatusHover }
+                  StatusTip { app: s.app; ws: s.ws; status: pp.st; hovered: ppStatusHover.hovered }
                 }
               }
               Text {

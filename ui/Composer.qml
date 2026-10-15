@@ -808,7 +808,7 @@ Rectangle {
           width: box.t.sp(28); height: width; radius: width / 2
           anchors.verticalCenter: parent.verticalCenter
           color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.1)
-          Glyph { app: box.app; anchors.centerIn: parent; icon: ""; size: box.t.fsIcon + 3; color: plusMa.containsMouse ? box.t.fgBright : box.t.fgSoft }
+          Glyph { app: box.app; anchors.centerIn: parent; inkCentered: true; icon: ""; size: box.t.fsIcon + 3; color: plusMa.containsMouse ? box.t.fgBright : box.t.fgSoft }
           MouseArea { id: plusMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: box.pickFiles() }
           PanelToolTip { visible: plusMa.containsMouse; text: box.app.tr("Upload from your computer", "Enviar do seu computador") + "  Ctrl+U" }
         }
@@ -857,7 +857,7 @@ Rectangle {
           topRightRadius: schedBtn.visible ? 0 : sendPill.r
           bottomRightRadius: schedBtn.visible ? 0 : sendPill.r
           color: sendPill.can && sendMa.containsMouse ? sendPill.lit : "transparent"
-          Glyph { app: box.app; anchors.centerIn: parent; icon: "󰒊"; size: box.t.fsIcon + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
+          Glyph { app: box.app; anchors.centerIn: parent; inkCentered: true; icon: "󰒊"; size: box.t.fsIcon + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
           MouseArea { id: sendMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendPill.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendPill.can) box.submit() }
           PanelToolTip { visible: sendMa.containsMouse && sendPill.can; text: box.sendLabel + "  Enter" }
         }
@@ -878,7 +878,7 @@ Rectangle {
           topRightRadius: sendPill.r
           bottomRightRadius: sendPill.r
           color: sendPill.can && schedMa.containsMouse ? sendPill.lit : "transparent"
-          Glyph { app: box.app; anchors.centerIn: parent; icon: ""; size: box.t.fsSmall + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
+          Glyph { app: box.app; anchors.centerIn: parent; inkCentered: true; icon: ""; size: box.t.fsSmall + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
           MouseArea { id: schedMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendPill.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendPill.can) box.scheduleMenu() }
           PanelToolTip { visible: schedMa.containsMouse && sendPill.can; text: box.app.tr("Schedule for later", "Agendar para depois") }
         }

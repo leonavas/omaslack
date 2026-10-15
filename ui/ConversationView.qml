@@ -4,6 +4,7 @@ import Quickshell
 import qs.Ui
 import "../lib/Util.js" as U
 import "../lib/Model.js" as Model
+import "../lib/Emoji.js" as Emoji
 import "../lib/Registry.js" as Reg
 
 // A conversation: Slack's header (name, members, tabs), the messages or the
@@ -87,12 +88,17 @@ Item {
             width: Math.min(implicitWidth, cv.width * 0.45)
           }
           EmojiIcon {
-            visible: !!cv.other && !!cv.ws.statusOf(cv.other.id)
+            id: headStatus
+            readonly property var status: cv.other ? cv.ws.statusOf(cv.other.id) : null
+            visible: !!status && (status.emoji !== "" || status.unicode !== "" || status.url !== "")
             app: cv.app
             ws: cv.ws
-            name: cv.other && cv.ws.statusOf(cv.other.id) ? cv.ws.statusOf(cv.other.id).emoji.replace(/:/g, "") : ""
+            name: status ? status.emoji.replace(/:/g, "") : ""
+            glyph: status && status.unicode ? Emoji.fromHex(status.unicode) : ""
+            url: status ? status.url : ""
             size: cv.t.sp(18)
             anchors.verticalCenter: parent.verticalCenter
+            StatusTip { app: cv.app; ws: cv.ws; status: headStatus.status; area: nameMa }
           }
           Glyph { app: cv.app; icon: "󰅀"; size: cv.t.fsSmall; color: cv.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
         }
