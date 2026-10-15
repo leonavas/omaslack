@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "id": "leonavas.omaslack",
+  "name": "Slack",
+  "version": "0.1.0",
+  "author": "leonavas",
+  "license": "Apache-2.0",
+  "description": "A whole Slack client inside the Omarchy shell: sign in with Slack's own page, sidebar sections, channels, DMs, threads, reactions, search, statuses, pauses and several workspaces, drawn in the theme's colors. The bar icon opens it and badges what is waiting.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Slack",
+    "description": "Slack in the shell: click to open or hide the window, red badge for direct messages and mentions, a preview of what is unread on hover.",
+    "category": "Status",
+    "aliases": [
+      "slack",
+      "chat",
+      "omaslack",
+      "messages"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "iconStyle": "Outline",
+      "glyph": "󰒱",
+      "glyphSize": 0,
+      "glyphOffsetY": 0,
+      "badge": "Count",
+      "badgeLayout": "Split",
+      "dmColor": "#b65f4e",
+      "channelColor": "#467996",
+      "channelBadge": "Unread",
+      "badgeScale": 0.45,
+      "tintWhenUnread": false,
+      "hideMode": "Special workspace",
+      "specialWorkspace": "scratchpad",
+      "openInSpecial": true,
+      "autoStart": false,
+      "launchForeground": true,
+      "dimWhenClosed": true,
+      "hideWhenNotRunning": false,
+      "middleClickCloses": true,
+      "hoverPreview": true,
+      "previewRows": 6,
+      "previewChannels": false,
+      "showReactions": true,
+      "showThreads": true,
+      "channelMentionsOnly": false,
+      "mutedIndicator": "Bell"
+    },
+    "schema": [
+      {
+        "key": "iconStyle",
+        "type": "enum",
+        "label": "Icon",
+        "options": [
+          "Outline",
+          "Color",
+          "Mono",
+          "Glyph"
+        ],
+        "defaultValue": "Outline",
+        "description": "Outline draws Slack's white mark with a faint dark edge, readable on light and dark bars. Color draws the mark in Slack's colors. Mono draws the white mark tinted with the bar's color. Glyph draws any Nerd Font character instead."
+      },
+      {
+        "key": "glyph",
+        "type": "string",
+        "label": "Glyph",
+        "defaultValue": "󰒱",
+        "description": "Only used by the Glyph style."
+      },
+      {
+        "key": "glyphSize",
+        "type": "integer",
+        "label": "Glyph size (px)",
+        "min": 0,
+        "max": 32,
+        "step": 1,
+        "defaultValue": 0,
+        "description": "0 follows the bar's icon size. Only used by the Glyph style."
+      },
+      {
+        "key": "glyphOffsetY",
+        "type": "number",
+        "label": "Vertical nudge (px)",
+        "min": -6,
+        "max": 6,
+        "step": 0.5,
+        "defaultValue": 0,
+        "description": "Negative moves the glyph up, for glyphs whose ink sits off the bar's line."
+      },
+      {
+        "key": "badge",
+        "type": "enum",
+        "label": "Unread badge",
+        "options": [
+          "Count",
+          "Dot",
+          "None"
+        ],
+        "defaultValue": "Count",
+        "description": "Two badges at once: unread DM and group DM messages and thread replies that mention you at the bottom-right in red, channel mentions and new replies in threads you follow at the top-right in blue. A badge with nothing to count is not drawn. Dot marks the same corners without numbers."
+      },
+      {
+        "key": "badgeLayout",
+        "type": "enum",
+        "label": "Badge layout",
+        "options": [
+          "Split",
+          "Combined"
+        ],
+        "defaultValue": "Split",
+        "description": "Split shows DMs (red, bottom-right) and channels (blue, top-right) as two badges. Combined shows one red badge, bottom-right, with their sum. The icon's menu toggles this as \"Group notifications\"."
+      },
+      {
+        "key": "dmColor",
+        "type": "string",
+        "label": "DM badge color",
+        "defaultValue": "#b65f4e",
+        "description": "Bottom-right badge: unread messages in DMs and group DMs. Empty follows the theme's urgent color."
+      },
+      {
+        "key": "channelColor",
+        "type": "string",
+        "label": "Channel badge color",
+        "defaultValue": "#467996",
+        "description": "Top-right badge: channel messages. Empty follows the theme's urgent color."
+      },
+      {
+        "key": "channelBadge",
+        "type": "enum",
+        "label": "Channel badge counts",
+        "options": [
+          "Unread",
+          "Mentions",
+          "All unread",
+          "None"
+        ],
+        "defaultValue": "Unread",
+        "description": "Unread counts the messages that mention you plus the unread channels that notify you (not muted and not set to mentions only in Slack) plus new replies in threads you follow. Mentions counts only the channel mentions. All unread adds every unread channel. None drops the channel badge."
+      },
+      {
+        "key": "badgeScale",
+        "type": "number",
+        "label": "Dot size",
+        "min": 0.2,
+        "max": 0.9,
+        "step": 0.05,
+        "defaultValue": 0.45,
+        "description": "The dot's diameter as a fraction of the icon. Only used by the Dot badge."
+      },
+      {
+        "key": "tintWhenUnread",
+        "type": "boolean",
+        "label": "Color the icon while something is waiting",
+        "defaultValue": false,
+        "description": "Mono and Glyph styles only: the mark takes the DM color, or the channel color when only channels are waiting."
+      },
+      {
+        "key": "hideMode",
+        "type": "enum",
+        "label": "What a click on the open window does",
+        "options": [
+          "Special workspace",
+          "Never hide"
+        ],
+        "defaultValue": "Special workspace",
+        "description": "Special workspace parks the window in a hidden Hyprland special workspace, where it stays as it was. Middle click (or Close Slack in the menu) closes it instead; the app keeps counting and notifying either way."
+      },
+      {
+        "key": "specialWorkspace",
+        "type": "string",
+        "label": "Name of the special workspace",
+        "defaultValue": "scratchpad",
+        "description": "Used as special:<name>. \"scratchpad\" is Omarchy's own, toggled with SUPER+S."
+      },
+      {
+        "key": "openInSpecial",
+        "type": "boolean",
+        "label": "Open straight into the special workspace",
+        "defaultValue": true,
+        "description": "The window opens in special:<name>, and a click shows or hides that workspace. The icon's menu toggles this as \"Open in Scratchpad\"."
+      },
+      {
+        "key": "autoStart",
+        "type": "boolean",
+        "label": "Open the window when the shell starts",
+        "defaultValue": false,
+        "description": "The app itself always runs with the shell; this opens its window too. The icon's menu toggles this as \"Launch on Login\"."
+      },
+      {
+        "key": "launchForeground",
+        "type": "boolean",
+        "label": "Show and focus the window when it opens",
+        "defaultValue": true,
+        "description": "Off, the window opens in the background, parked in the special workspace without taking the focus (nor marking anything read), also when opened from the icon. The icon's menu toggles this as \"Launch in Foreground\"."
+      },
+      {
+        "key": "dimWhenClosed",
+        "type": "boolean",
+        "label": "Dim the icon while signed out",
+        "defaultValue": true
+      },
+      {
+        "key": "hideWhenNotRunning",
+        "type": "boolean",
+        "label": "Remove the icon from the bar while signed out",
+        "defaultValue": false
+      },
+      {
+        "key": "middleClickCloses",
+        "type": "boolean",
+        "label": "Middle click closes the window",
+        "defaultValue": true
+      },
+      {
+        "key": "hoverPreview",
+        "type": "boolean",
+        "label": "Preview unread conversations on hover",
+        "defaultValue": true
+      },
+      {
+        "key": "previewRows",
+        "type": "integer",
+        "label": "Conversations shown in the preview",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "defaultValue": 6
+      },
+      {
+        "key": "previewChannels",
+        "type": "boolean",
+        "label": "Preview every unread channel",
+        "defaultValue": false,
+        "description": "Off, the preview lists DMs, group DMs, channels that mention you and channels that notify you, and only counts the muted or mentions-only ones. On, every unread channel gets a row."
+      },
+      {
+        "key": "channelMentionsOnly",
+        "type": "boolean",
+        "label": "Channel mentions only",
+        "defaultValue": false,
+        "description": "On, a channel only gets a row and counts in the blue badge when it mentions you; every other unread channel only counts in the preview's footer. Off, channels that notify you (not muted, not set to mentions only in Slack) count too. The icon's menu toggles this as \"Channel mentions only\"."
+      },
+      {
+        "key": "showReactions",
+        "type": "boolean",
+        "label": "Show reactions to your messages",
+        "defaultValue": true,
+        "description": "Lists the reactions other people put on your messages in the preview, and floats each new one up out of the icon. They never add to the badges. The icon's menu toggles this as \"Show reactions\"."
+      },
+      {
+        "key": "showThreads",
+        "type": "boolean",
+        "label": "Show threads you follow",
+        "defaultValue": true,
+        "description": "Lists the threads you follow with new replies in the preview. Replies that mention you add to the red badge, the other new replies to the blue one (not with the channel badge set to Mentions or None). The icon's menu toggles this as \"Show threads\"."
+      },
+      {
+        "key": "mutedIndicator",
+        "type": "enum",
+        "label": "While notifications are paused",
+        "options": [
+          "Bell",
+          "Dim",
+          "None"
+        ],
+        "defaultValue": "Bell",
+        "description": "A pause you set hides both badges. Bell fades the mark and puts a small bell-off in the bottom-right corner, Dim fades the whole icon, None shows nothing. Slack's scheduled night-time DND keeps the badges."
+      }
+    ]
+  }
+}

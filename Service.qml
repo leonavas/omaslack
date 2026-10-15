@@ -1,0 +1,765 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import Quickshell.Hyprland
+import qs.Commons
+import "core"
+import "ui"
+import "lib/Util.js" as U
+import "lib/Model.js" as Model
+import "lib/Mrkdwn.js" as Md
+import "lib/Registry.js" as Registry
+import "lib/Emoji.js" as Emoji
+
+// The whole app, once per shell: the signed-in workspaces, preferences,
+// the window, the sign-in flow and desktop notifications. The bar widget
+// is only a door into it (Widget.qml).
+Item {
+  id: root
+
+  // Host injection (ignored when absent).
+  property var shell: null
+  property var manifest: null
+
+  readonly property string pluginId: "leonavas.omaslack"
+  // Views find the app here before anything is handed to them.
+  readonly property bool _registered: { Registry.service = root; return true }
+  readonly property string home: Quickshell.env("HOME") || ""
+  readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || home + "/.config") + "/omaslack"
+  readonly property string cacheDir: (Quickshell.env("XDG_CACHE_HOME") || home + "/.cache") + "/omaslack"
+  readonly property string dataDir: (Quickshell.env("XDG_DATA_HOME") || home + "/.local/share") + "/omaslack"
+  readonly property string downloadsDir: Quickshell.env("XDG_DOWNLOAD_DIR") || home + "/Downloads"
+  readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
+
+  // ---------------------------------------------------------------- settings
+  property var settings: ({})
+  property bool settingsLoaded: false
+  function setting(key, fallback) { var v = root.settings[key]; return v === undefined || v === null ? fallback : v }
+  function setSetting(key, value) {
+    var s = U.copy(root.settings)
+    s[key] = value
+    root.settings = s
+    saveSettingsSoon.restart()
+  }
+
+  readonly property string lang: setting("lang", (Quickshell.env("LANG") || "").indexOf("pt") === 0 ? "pt-BR" : "en")
+  readonly property bool clock24: setting("clock", "24h") !== "12h"
+  readonly property bool compact: setting("spacing", "comfortable") === "compact"
+  readonly property bool unreadBar: setting("unreadBar", true) !== false
+  readonly property bool unreadBackground: setting("unreadBackground", false) === true
+  readonly property bool notificationsOn: setting("notifications", true) !== false
+  readonly property bool soundOn: setting("sound", true) !== false
+  readonly property bool previewOn: setting("notificationPreview", true) !== false
+  readonly property real zoom: setting("zoom", 1.0)
+  readonly property bool slackEmoji: setting("emojiStyle", "slack") !== "system"
+  function tr(en, pt) { return root.lang === "pt-BR" ? pt : en }
+
+  FileView {
+    id: settingsFile
+    path: root.configDir + "/settings.json"
+    printErrors: false
+    blockLoading: true
+    onLoaded: {
+      try { root.settings = JSON.parse(text()) || {} } catch (e) { root.settings = {} }
+      root.settingsLoaded = true
+    }
+    onLoadFailed: { root.settings = {}; root.settingsLoaded = true }
+  }
+
+  Timer { id: saveSettingsSoon; interval: 600; onTriggered: settingsFile.setText(JSON.stringify(root.settings, null, 2)) }
+
+  function teamSetting(team, key, fallback) {
+    var t = (root.settings.teams || {})[team] || {}
+    return t[key] === undefined ? fallback : t[key]
+  }
+  function setTeamSetting(team, key, value) {
+    var teams = U.copy(root.settings.teams || {})
+    var t = U.copy(teams[team] || {})
+    t[key] = value
+    teams[team] = t
+    root.setSetting("teams", teams)
+  }
+  function rememberConv(team, conv) { root.setTeamSetting(team, "lastConv", conv) }
+  function saveCollapsed(team, map) { root.setTeamSetting(team, "collapsed", map) }
+
+  // ---------------------------------------------------------------- accounts
+  // [{teamId, token, cookie, domain, name, userId, icon}] — the sessions,
+  // readable only by the user.
+  property var accounts: []
+  property bool accountsLoaded: false
+  property string currentTeam: ""
+
+  FileView {
+    id: accountsFile
+    path: root.configDir + "/accounts.json"
+    printErrors: false
+    blockLoading: true
+    onLoaded: {
+      try { root.accounts = (JSON.parse(text()) || {}).accounts || [] } catch (e) { root.accounts = [] }
+      if (root.demo) root.accounts = [{ teamId: "T0DEMO", demo: true, token: "", cookie: "", domain: "acme", name: "Acme", userId: "U0ME" }]
+      root.accountsLoaded = true
+    }
+    onLoadFailed: {
+      root.accounts = root.demo ? [{ teamId: "T0DEMO", demo: true, token: "", cookie: "", domain: "acme", name: "Acme", userId: "U0ME" }] : []
+      root.accountsLoaded = true
+    }
+  }
+  // A pretend workspace (lib/Demo.js), for trying the app without signing in.
+  readonly property bool demo: Quickshell.env("SLACKQS_DEMO") === "1"
+
+  function saveAccounts() {
+    if (root.demo) return
+    accountsFile.setText(JSON.stringify({ accounts: root.accounts }, null, 2))
+    Quickshell.execDetached(["chmod", "600", accountsFile.path])
+  }
+
+  function accountSeen(teamId, info) {
+    var changed = false
+    var list = root.accounts.map(function(a) {
+      if (a.teamId !== teamId) return a
+      var b = U.copy(a)
+      for (var k in info) if (info[k] && b[k] !== info[k]) { b[k] = info[k]; changed = true }
+      return b
+    })
+    if (changed) { root.accounts = list; root.saveAccounts() }
+  }
+
+  function addAccount(acc) {
+    var list = root.accounts.filter(function(a) { return a.teamId !== acc.teamId })
+    var at = root.accounts.findIndex(function(a) { return a.teamId === acc.teamId })
+    if (at >= 0) list.splice(at, 0, acc)
+    else list.push(acc)
+    root.accounts = list
+    root.saveAccounts()
+    root.currentTeam = acc.teamId
+    root.setSetting("active", acc.teamId)
+  }
+
+  function signOut(teamId) {
+    root.accounts = root.accounts.filter(function(a) { return a.teamId !== teamId })
+    root.saveAccounts()
+    if (root.currentTeam === teamId) root.currentTeam = root.accounts.length ? root.accounts[0].teamId : ""
+    Quickshell.execDetached(["rm", "-f", root.cacheDir + "/team-" + teamId + ".json"])
+  }
+
+  function switchTo(teamId) {
+    if (!root.accounts.some(function(a) { return a.teamId === teamId })) return
+    root.currentTeam = teamId
+    root.setSetting("active", teamId)
+  }
+  function switchBy(delta) {
+    var i = root.accounts.findIndex(function(a) { return a.teamId === root.currentTeam })
+    if (i < 0 || root.accounts.length < 2) return
+    var n = (i + delta + root.accounts.length) % root.accounts.length
+    root.switchTo(root.accounts[n].teamId)
+  }
+
+  // ---------------------------------------------------------------- workspaces
+  property var workspaces: []
+  readonly property var current: {
+    var list = root.workspaces
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].teamId === root.currentTeam) return list[i]
+    return list.length ? list[0] : null
+  }
+  readonly property bool signedIn: root.accounts.length > 0
+
+  Instantiator {
+    id: spaces
+    // Keyed by team: an account whose name or icon changes keeps its workspace.
+    model: ScriptModel { values: root.accountsLoaded && root.settingsLoaded ? root.accounts : []; objectProp: "teamId" }
+    delegate: Workspace {
+      required property var modelData
+      account: modelData
+      app: root
+      onAuthFailed: error => root.sessionExpired(modelData.teamId, error)
+      onNotify: info => root.notifyFrom(this, info)
+    }
+    onObjectAdded: (index, object) => {
+      var list = root.workspaces.slice()
+      list.splice(index, 0, object)
+      root.workspaces = list
+      var collapsed = root.teamSetting(object.teamId, "collapsed", null)
+      if (collapsed) object.collapsed = collapsed
+      var last = root.teamSetting(object.teamId, "lastConv", "")
+      if (last && !object.current) Qt.callLater(function() { object.open(last, { noHistory: true }) })
+      var drafts = root.teamSetting(object.teamId, "drafts", null)
+      if (drafts) { object.drafts = drafts; object.draftsRev++ }
+      var sent = root.teamSetting(object.teamId, "sentLog", null)
+      if (sent) object.sentLog = sent
+    }
+    onObjectRemoved: (index, object) => {
+      root.workspaces = root.workspaces.filter(function(w) { return w !== object })
+    }
+  }
+
+  // The token stopped working: back to the sign-in screen for it.
+  property var expired: ({})
+  function sessionExpired(teamId, error) {
+    var e = U.copy(root.expired)
+    e[teamId] = error
+    root.expired = e
+  }
+
+  // Badges, summed over every workspace.
+  readonly property var attention: {
+    var out = { mentions: 0, dms: 0, channels: 0, total: 0 }
+    root.workspaces.forEach(function(w) {
+      var a = w.attention
+      out.mentions += a.mentions; out.dms += a.dms; out.channels += a.channels; out.total += a.total
+    })
+    return out
+  }
+  readonly property bool paused: root.workspaces.some(function(w) { return w.dnd !== null })
+
+  function pauseAll(minutes) { root.workspaces.forEach(function(w) { w.pause(minutes) }) }
+  function resumeAll() { root.workspaces.forEach(function(w) { if (w.dnd) w.resume() }) }
+
+  // ---------------------------------------------------------------- window
+  property bool windowOpen: Quickshell.env("SLACKQS_OPEN") === "1"
+  property bool windowFocused: false
+  property string pendingDialog: ""
+  signal dialogRequested(string name, var args)
+
+  // Shown, put away or closed, the way the bar widget's settings say
+  // (`barOptions`, pushed by Widget.qml): a click on the focused window
+  // parks it in a Hyprland special workspace (Omarchy's scratchpad,
+  // SUPER+S), where it stays as it was, or leaves it be; a window opened
+  // with "Open in Scratchpad" goes straight there, and one opened in the
+  // background (Launch in Foreground off) is born there, unseen. Closing it
+  // (hideWindow) unmaps it; the app keeps counting and notifying either way.
+  property var barOptions: ({ specialName: "scratchpad", openInSpecial: true, hideMode: "Special workspace", launchForeground: true })
+  property bool autoStarted: false
+  readonly property string specialName: String(root.barOptions.specialName || "scratchpad")
+  readonly property var toplevel: root.windowOpen ? root.ourToplevel() : null
+  readonly property bool parked: root.workspaceOf(root.toplevel) === "special:" + root.specialName
+  readonly property bool specialShown: {
+    var m = Hyprland.focusedMonitor
+    var ipc = m ? m.lastIpcObject : null
+    var s = ipc ? ipc["specialWorkspace"] : null
+    return !!s && String(s.name || "") === "special:" + root.specialName
+  }
+  // On while a background launch puts the window away: when the launch rule
+  // missed, Hyprland focuses it for a moment on the way, which must not
+  // count as reading it.
+  property bool stowing: false
+
+  function showWindow() {
+    if (!root.windowOpen) { root.launchWindow(true); return }
+    if (root.parked) {
+      if (root.barOptions.openInSpecial !== false) { if (!root.specialShown) root.toggleSpecial() }
+      else root.moveToActive()
+    }
+    root.raiseSoon()
+  }
+  function hideWindow() { root._launchPending = false; root.endLaunch(); root.windowOpen = false }
+  // Left click: open it, bring it back, put it away.
+  function toggleWindow() {
+    if (!root.windowOpen) root.launchWindow(root.barOptions.launchForeground !== false)
+    else if (root.windowFocused && root.barOptions.hideMode === "Special workspace") root.park()
+    else if (root.parked) root.showWindow()
+    else root.raiseSoon()
+  }
+
+  // A Quickshell window maps where Hyprland's window rules send it, so one
+  // headed for the scratchpad (a background launch, or "Open in
+  // Scratchpad") is born there. For the launch it carries a one-time title
+  // (`launchTitle`, shown by AppWindow instead of its own), and a named
+  // rule for exactly that title and our app id, set before it maps, sends
+  // it to the special workspace: silently and without the focus in the
+  // background (nothing shows on the current workspace, the focus and the
+  // cursor stay where they were), opening the scratchpad with it in the
+  // foreground. Once Hyprland reports it (openwindow) the title goes back
+  // and the rule is switched off. Hyprlang configs get the same rules with
+  // `keyword`, which can't be taken back but name a title no window will
+  // have again; a window a rule missed still maps on the current workspace
+  // and is moved once Hyprland lists it, as before.
+  property bool _launchForeground: true
+  property string _launchBack: ""
+  property bool _launchPending: false
+  property string _launchWorkspace: ""
+  property string launchTitle: ""
+  readonly property string launchRule: "omaslack-launch"
+  function launchWindow(foreground) {
+    if (root._launchPending) return
+    root._launchForeground = foreground
+    root._launchBack = root.lastOtherAddress
+    root._launchWorkspace = ""
+    root._ourAddress = ""
+    root.stowing = !foreground
+    if (foreground && root.barOptions.openInSpecial === false) { root.mapLaunch(); return }
+    root.launchTitle = "omaslack-launch-" + Math.random().toString(36).slice(2, 10)
+    root._launchPending = true
+    launchRuleProc.command = Hyprland.usingLua === true
+      ? ["hyprctl", "eval", root.launchRuleLua(true)]
+      : ["hyprctl", "--batch", root.launchRuleLegacy()]
+    launchRuleProc.running = true
+    launchRuleWait.restart()
+  }
+  // The window maps once the rule is in (or Hyprland took too long to say).
+  function mapLaunch() {
+    root._launchPending = false
+    launchRuleWait.stop()
+    root.windowOpen = true
+    placeTimer.ticks = 0
+    placeTimer.restart()
+  }
+  Process {
+    id: launchRuleProc
+    onExited: (code, status) => { if (root._launchPending) root.mapLaunch() }
+  }
+  Timer { id: launchRuleWait; interval: 1000; onTriggered: if (root._launchPending) root.mapLaunch() }
+
+  function luaString(text) { return '"' + String(text).replace(/["\\]/g, "\\$&") + '"' }
+  // One name per kind of launch: a named rule is declared again on each
+  // launch, and a foreground one must not keep a background one's effects.
+  function launchRuleLua(on) {
+    var spec = ["name = " + root.luaString(root.launchRule + (root._launchForeground ? "-fg" : "-bg")), "enabled = " + on,
+                "match = { class = \"^org[.]quickshell$\", title = " + root.luaString("^" + root.launchTitle + "$") + " }"]
+    var special = "special:" + root.specialName
+    if (on && root._launchForeground) spec.push("workspace = " + root.luaString(special))
+    else if (on) spec.push("workspace = " + root.luaString(special + " silent"), "no_initial_focus = true",
+                           "focus_on_activate = false", 'suppress_event = "activate activatefocus"')
+    return "hl.window_rule({ " + spec.join(", ") + " })"
+  }
+  // Both syntaxes, today's and the windowrulev2 one: the one Hyprland
+  // doesn't know is refused and changes nothing.
+  function launchRuleLegacy() {
+    var ws = "special:" + root.specialName + (root._launchForeground ? "" : " silent")
+    var cls = "^(org\\.quickshell)$", title = "^(" + root.launchTitle + ")$"
+    var rules = ["keyword windowrule workspace " + ws + (root._launchForeground ? "" : ", no_initial_focus on")
+                   + ", match:class " + cls + ", match:title " + title,
+                 "keyword windowrulev2 workspace " + ws + ", class:" + cls + ", title:" + title]
+    if (!root._launchForeground) rules.push("keyword windowrulev2 noinitialfocus, class:" + cls + ", title:" + title)
+    return rules.join(" ; ")
+  }
+  // The window is in: its own title back, the rule off.
+  function endLaunch() {
+    if (!root.launchTitle) return
+    if (Hyprland.usingLua === true) Quickshell.execDetached(["hyprctl", "eval", root.launchRuleLua(false)])
+    root.launchTitle = ""
+  }
+
+  Timer {
+    id: placeTimer
+    property int ticks: 0
+    interval: 50
+    repeat: true
+    onTriggered: {
+      var address = root.windowAddress()
+      if (!address && ++ticks < 60 && root.windowOpen) return
+      stop()
+      root.endLaunch()
+      if (!address || !root.windowOpen) { root.stowing = false; return }
+      root._ourAddress = root.bareAddress(address.slice(8))
+      root.tagWindow(address.slice(8))
+      var special = "special:" + root.specialName
+      var there = (root._launchWorkspace || root.workspaceOf(root.ourToplevel())) === special
+      if (!root._launchForeground) {
+        if (there) stowEnd.restart()
+        else { root.moveWindow(address, special, true); backgroundFix.restart() }
+      } else if (root.barOptions.openInSpecial !== false) {
+        // Not silent: the scratchpad opens with it.
+        if (!there) root.moveWindow(address, special, false)
+        root.raiseSoon()
+      } else root.raiseSoon()
+    }
+  }
+
+  // Only when the launch rule missed. Moving the window that just took the
+  // focus makes Hyprland refocus, and its pick can be a window in the
+  // scratchpad, which opens it on screen. A background launch puts that
+  // back: scratchpad hidden, focus on the window you were using. Checked
+  // against hyprctl rather than the cached monitor state, which lags the
+  // events by a beat.
+  Timer {
+    id: backgroundFix
+    interval: 200
+    onTriggered: {
+      var lua = Hyprland.usingLua === true
+      var hide = lua ? 'hl.dsp.workspace.toggle_special("' + root.specialName + '")' : "togglespecialworkspace " + root.specialName
+      var back = root._launchBack
+      var focus = back.length === 0 ? "" : lua ? 'hl.dsp.focus({ window = "' + back + '" })' : "focuswindow " + back
+      Quickshell.execDetached(["bash", "-c",
+        'shown=$(hyprctl monitors -j | jq -r \'.[] | select(.focused) | .specialWorkspace.name\'); '
+        + '[ "$shown" = "special:$1" ] && hyprctl dispatch "$2" >/dev/null; '
+        + '[ -n "$3" ] && hyprctl dispatch "$3" >/dev/null; exit 0',
+        "slack-background", root.specialName, hide, focus])
+      stowEnd.restart()
+    }
+  }
+  Timer { id: stowEnd; interval: 300; onTriggered: root.stowing = false }
+
+  function park() {
+    var address = root.windowAddress()
+    if (!address) return
+    if (root.parked && root.specialShown) { root.toggleSpecial(); return }
+    root.moveWindow(address, "special:" + root.specialName, true)
+  }
+
+  function moveToActive() {
+    var address = root.windowAddress()
+    var ws = Hyprland.focusedWorkspace ? String(Hyprland.focusedWorkspace.name || "") : ""
+    if (address && ws && ws.indexOf("special:") !== 0) root.moveWindow(address, ws, false)
+  }
+
+  function hyprDispatch(luaForm, legacyForm) {
+    Hyprland.dispatch(Hyprland.usingLua === true ? luaForm : legacyForm)
+  }
+  function moveWindow(address, workspace, silent) {
+    root.hyprDispatch('hl.dsp.window.move({ window = "' + address + '", workspace = "' + workspace + '"' + (silent ? ", silent = true" : "") + " })",
+                      (silent ? "movetoworkspacesilent " : "movetoworkspace ") + workspace + "," + address)
+  }
+  function toggleSpecial() {
+    root.hyprDispatch('hl.dsp.workspace.toggle_special("' + root.specialName + '")', "togglespecialworkspace " + root.specialName)
+  }
+
+  function windowAddress() {
+    var t = root.ourToplevel()
+    if (!t || !t.address) return ""
+    var a = String(t.address)
+    return "address:" + (a.indexOf("0x") === 0 ? a : "0x" + a)
+  }
+  function workspaceOf(t) {
+    if (!t) return ""
+    if (t.workspace && t.workspace.name) return String(t.workspace.name)
+    var ipc = t.lastIpcObject
+    return ipc && ipc["workspace"] && ipc["workspace"]["name"] ? String(ipc["workspace"]["name"]) : ""
+  }
+
+  // The window you were using, to give the focus back to after a
+  // background launch.
+  property string lastOtherAddress: ""
+  Connections {
+    target: Hyprland
+    // The monitors' cached state (`specialShown`) follows the scratchpad.
+    function onRawEvent(event) {
+      if (event.name === "activespecial" || event.name === "activespecialv2") Hyprland.refreshMonitors()
+    }
+    function onActiveToplevelChanged() {
+      var t = Hyprland.activeToplevel
+      if (!t || !t.address || root.isOurToplevel(t) || root.workspaceOf(t).indexOf("special:") === 0) return
+      var a = String(t.address)
+      root.lastOtherAddress = "address:" + (a.indexOf("0x") === 0 ? a : "0x" + a)
+    }
+  }
+  function openDialog(name, args) { root.showWindow(); root.dialogRequested(name, args || {}) }
+
+  // Focus the window through Hyprland (a click on the bar doesn't move focus).
+  function raiseSoon() { raiseTimer.restart() }
+  // Our window: Quickshell's app id and AppWindow's title ("… - Slack", or
+  // the launch's one-time one). The title alone is not enough: the Slack
+  // desktop app's ends the same way (its class is "slack"). The address
+  // Hyprland reported it with (openwindow, which carries the class) wins.
+  readonly property string appClass: "org.quickshell"
+  property string _ourAddress: ""
+  function bareAddress(a) { a = String(a || ""); return a.indexOf("0x") === 0 ? a.slice(2) : a }
+  function isOurTitle(title) {
+    title = String(title || "")
+    return (root.launchTitle !== "" && title === root.launchTitle) || title === "Slack" || / - Slack$/.test(title)
+  }
+  function classOf(t) {
+    if (t.wayland && t.wayland.appId) return String(t.wayland.appId)
+    var ipc = t.lastIpcObject
+    return ipc ? String(ipc["class"] || ipc["initialClass"] || "") : ""
+  }
+  function isOurToplevel(t) {
+    if (!t) return false
+    var cls = root.classOf(t)
+    if (cls && cls !== root.appClass) return false
+    if (root._ourAddress && root.bareAddress(t.address) === root._ourAddress) return true
+    // A class not known yet: only the launch's one-time title is surely ours.
+    return cls ? root.isOurTitle(t.title) : root.launchTitle !== "" && String(t.title || "") === root.launchTitle
+  }
+  function ourToplevel() {
+    var list = Hyprland.toplevels ? (Hyprland.toplevels.values || []) : []
+    if (root._ourAddress) for (var i = 0; i < list.length; i++) if (root.bareAddress(list[i].address) === root._ourAddress) return list[i]
+    for (var j = 0; j < list.length; j++) if (root.isOurToplevel(list[j])) return list[j]
+    return null
+  }
+  Timer {
+    id: raiseTimer
+    interval: 150
+    onTriggered: {
+      var t = root.ourToplevel()
+      if (!t || !t.address) return
+      var addr = String(t.address)
+      if (addr.indexOf("0x") !== 0) addr = "0x" + addr
+      Hyprland.dispatch(Hyprland.usingLua === true ? 'hl.dsp.focus({ window = "address:' + addr + '" })' : "focuswindow address:" + addr)
+      root.tagWindow(addr)
+    }
+  }
+
+  // The window is Quickshell's, and its app id (org.quickshell) is the whole
+  // shell's, so docks would draw Quickshell's icon for it. A Hyprland tag,
+  // "icon:<path>", names ours for the bar widgets that read it
+  // (leonavas.spaces). Hiding the window closes it for Hyprland, so it's
+  // tagged on every open (and on every raise, for a window kept across a
+  // shell reload); adding a tag it already has changes nothing.
+  readonly property string appIcon: root.pluginDir + "/assets/slack.svg"
+  function tagWindow(address) {
+    var addr = String(address || "")
+    if (!addr) return
+    if (addr.indexOf("0x") !== 0) addr = "0x" + addr
+    var tag = "+icon:" + root.appIcon
+    Hyprland.dispatch(Hyprland.usingLua === true
+                      ? 'hl.dsp.window.tag({ tag = "' + tag.replace(/["\\]/g, "\\$&") + '", window = "address:' + addr + '" })'
+                      : "tagwindow " + tag + " address:" + addr)
+  }
+  // Also where a launch ends: the window is in, wherever the rule put it.
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (event.name === "closewindow") {
+        if (root._ourAddress && root.bareAddress(event.data) === root._ourAddress) root._ourAddress = ""
+        return
+      }
+      if (event.name !== "openwindow") return
+      var f = event.parse(4)   // address, workspace, class, title
+      if (f.length < 4 || f[2] !== root.appClass || !root.isOurTitle(f[3])) return
+      root._ourAddress = root.bareAddress(f[0])
+      root.tagWindow(f[0])
+      if (root.launchTitle !== "" && f[3] === root.launchTitle) {
+        root._launchWorkspace = String(f[1])
+        root.endLaunch()
+      }
+    }
+  }
+
+  function openConversation(teamId, conv, ts, threadTs) {
+    if (teamId) root.switchTo(teamId)
+    var w = root.current
+    if (!w) return
+    root.showWindow()
+    w.open(conv, { ts: ts || "", threadTs: threadTs || "" })
+  }
+
+  Theme {
+    id: themeObj
+    zoom: root.zoom
+  }
+  readonly property alias theme: themeObj
+  readonly property var window: windowLoader.item
+
+  // The window is made once the app is complete (views read it at birth).
+  property bool ready: false
+  LazyLoader {
+    id: windowLoader
+    active: root.ready
+    AppWindow { app: root }
+  }
+  readonly property var appWindow: windowLoader.item
+
+  // ---------------------------------------------------------------- sign in
+  property bool loginRunning: false
+  property string loginError: ""
+  property string loginStatus: ""
+  property var _loginResult: null
+  readonly property string webProfile: root.dataDir + "/webview"
+  // The sign-in window's HTTP cache (its profile's cachePath, Login.qml).
+  readonly property string webCache: root.cacheDir + "/webview"
+
+  Process {
+    id: loginProc
+    environment: ({ QT_FORCE_STDERR_LOGGING: "1", QTWEBENGINE_DISABLE_SANDBOX: "0" })
+    stdout: SplitParser { onRead: data => root.loginLine(data) }
+    stderr: SplitParser { onRead: data => root.loginLine(data) }
+    onExited: (code, status) => { purgeSoon.restart(); root.loginExited(code) }
+  }
+
+  // The sign-in window's caches (Slack's pages and scripts, ~100 MB: the
+  // HTTP cache, and the code, GPU and service-worker caches it leaves in
+  // the profile), useless once it's closed. Cookies and storage stay: they
+  // keep the window signed in, so adding a workspace or signing in again
+  // skips the password. A moment after the window quits (its web processes
+  // go with it), and never while one is open again.
+  Timer { id: purgeSoon; interval: 2000; onTriggered: root.purgeWebCache() }
+  function purgeWebCache() {
+    if (loginProc.running) return
+    var p = root.webProfile + "/"
+    Quickshell.execDetached(["rm", "-rf", "--", root.webCache, p + "Cache", p + "Code Cache", p + "GPUCache", p + "GrShaderCache", p + "ShaderCache",
+                             p + "DawnGraphiteCache", p + "DawnWebGPUCache", p + "Service Worker/CacheStorage"])
+  }
+
+  function startLogin(workspace) {
+    if (root.loginRunning) return
+    root.loginError = ""
+    root.loginStatus = root.tr("Sign in to Slack in the window that opened…", "Entre no Slack na janela que abriu…")
+    root._loginResult = null
+    var known = root.accounts.map(function(a) { return a.teamId }).join(",")
+    var qml = root.pluginDir + "/login/Login.qml"
+    loginProc.command = ["bash", "-c", 'bin=$(command -v qml6 || true); [ -x "$bin" ] || bin=/usr/lib/qt6/bin/qml; [ -x "$bin" ] || bin=$(command -v qml); exec "$bin" "$@"',
+                         "qml", qml, "--", root.webProfile, known, root.lang, String(workspace || "").trim(), root.webCache]
+    root.loginRunning = true
+    loginProc.running = true
+  }
+
+  function cancelLogin() { if (loginProc.running) loginProc.signal(15) }
+
+  function loginLine(line) {
+    var at = line.indexOf("SLACKQS-RESULT ")
+    if (at >= 0) {
+      try { root._loginResult = JSON.parse(line.slice(at + 15)) } catch (e) {}
+      return
+    }
+    if (line.indexOf("SLACKQS-STATUS ") >= 0) root.loginStatus = line.slice(line.indexOf("SLACKQS-STATUS ") + 15)
+    if (/module "QtWebEngine" is not installed|QtWebEngine.*not installed/.test(line)) root.loginError = root.tr("The sign-in window needs Qt WebEngine (pacman -S qt6-webengine). You can paste a token instead.", "A janela de login precisa do Qt WebEngine (pacman -S qt6-webengine). Você pode colar um token.")
+  }
+
+  function loginExited(code) {
+    var res = root._loginResult
+    if (!res || !res.token) {
+      root.loginRunning = false
+      root.loginStatus = ""
+      if (!root.loginError && code !== 0 && code !== 1 && code !== 15 && code !== 143) root.loginError = root.tr("The sign-in window closed unexpectedly (exit " + code + ").", "A janela de login fechou inesperadamente (saída " + code + ").")
+      return
+    }
+    root.loginStatus = root.tr("Checking the session…", "Conferindo a sessão…")
+    utilWire.readCookie(root.webProfile + "/Cookies", function(r) {
+      if (!r.ok || !r.cookie) {
+        root.loginRunning = false
+        root.loginStatus = ""
+        root.loginError = root.tr("Signed in, but the session cookie wasn't saved. Try again.", "Entrou, mas o cookie da sessão não foi salvo. Tente de novo.")
+        return
+      }
+      root.checkSession(res.token, r.cookie, function(err) {
+        root.loginRunning = false
+        root.loginStatus = ""
+        if (err) root.loginError = err
+      })
+    })
+  }
+
+  Transport { id: utilWire }
+
+  Component {
+    id: probeComponent
+    Transport { }
+  }
+
+  // auth.test with these credentials; on success the workspace is added.
+  function checkSession(token, cookie, cb) {
+    token = String(token || "").trim()
+    cookie = String(cookie || "").trim()
+    if (token.indexOf("xox") !== 0) { cb(root.tr("The token starts with xoxc- or xoxp-.", "O token começa com xoxc- ou xoxp-.")); return }
+    if (token.indexOf("xoxc-") === 0 && !cookie) { cb(root.tr("A xoxc- token needs the d cookie (xoxd-…).", "Um token xoxc- precisa do cookie d (xoxd-…).")); return }
+    var probe = probeComponent.createObject(root, { token: token, cookie: cookie })
+    probe.call("auth.test", {}, function(r) {
+      probe.destroy()
+      if (!r.ok || !r.body || !r.body.ok) {
+        var err = r.ok ? (r.body && r.body.error) || "?" : r.error
+        cb(err === "invalid_auth" || err === "not_authed"
+           ? root.tr("Slack refused: check the token and the cookie.", "O Slack recusou: confira o token e o cookie.")
+           : root.tr("Couldn't sign in: ", "Não foi possível entrar: ") + err)
+        return
+      }
+      var b = r.body
+      var domain = String(b.url || "").replace(/^https?:\/\//, "").split(".")[0]
+      var e = U.copy(root.expired); delete e[b.team_id]; root.expired = e
+      root.addAccount({ teamId: b.team_id, token: token, cookie: cookie, domain: domain, name: b.team || domain, userId: b.user_id, icon: "" })
+      cb("")
+    })
+  }
+
+  // ---------------------------------------------------------------- notifications
+  Component {
+    id: notifyComponent
+    Process {
+      property var info: null
+      stdout: StdioCollector {
+        onStreamFinished: {
+          if (String(text).trim() === "open" && parent && parent.info) root.openConversation(parent.info.team, parent.info.conv, parent.info.ts, parent.info.threadTs)
+        }
+      }
+      onExited: destroy()
+    }
+  }
+
+  property real _lastSound: 0
+
+  function notifyFrom(w, info) {
+    if (!root.notificationsOn || Quickshell.env("SLACKQS_READONLY") === "1") return
+    var title = "", body = ""
+    var c = w.conv(info.conv)
+    var label = w.convLabel(info.conv)
+    var ctx = w.renderCtx(themeObj.html, 16)
+    if (info.kind === "reaction") {
+      var who = w.userName(info.user) || "?"
+      title = who
+      var glyph = Emoji.standard(info.reaction) || (":" + info.reaction + ":")
+      body = root.tr("reacted ", "reagiu com ") + glyph + root.tr(" to your message", " à sua mensagem")
+    } else {
+      var m = info.msg
+      var author = w.author(m).name || "?"
+      var text = Md.flat(m, ctx, 300)
+      if (c && Model.isDm(c) && c.kind === "im") { title = author; body = text }
+      else { title = (c && c.kind === "mpim" ? "" : "#") + label + (info.threadTs ? root.tr(" (thread)", " (conversa)") : ""); body = author + ": " + text }
+      if (!root.previewOn) body = root.tr("New message", "Nova mensagem")
+    }
+    if (root.workspaces.length > 1) title += " · " + (w.team.name || "")
+    var icon = root.appIcon
+    var p = notifyComponent.createObject(root, {
+      info: info,
+      command: ["notify-send", "-a", "Slack", "-i", icon, "-A", "open=" + root.tr("Open", "Abrir"), "--wait", title, body]
+    })
+    p.running = true
+    if (root.soundOn && Date.now() - root._lastSound > 1500) {
+      root._lastSound = Date.now()
+      Quickshell.execDetached(["sh", "-c", 'for f in /usr/share/sounds/freedesktop/stereo/message-new-instant.oga /usr/share/sounds/freedesktop/stereo/message.oga; do [ -f "$f" ] && exec pw-play "$f"; done; exit 0'])
+    }
+  }
+
+  // ---------------------------------------------------------------- utilities
+  function copy(text) {
+    Quickshell.execDetached(["wl-copy", "--", String(text)])
+  }
+
+  function openUrl(url) {
+    if (!url) return
+    var link = U.parsePermalink(url)
+    if (link && root.current && url.indexOf((root.current.team.domain || "-") + ".slack.com") >= 0) {
+      root.current.open(link.conv, { ts: link.ts, threadTs: link.threadTs })
+      return
+    }
+    Qt.openUrlExternally(url)
+  }
+
+  // ---------------------------------------------------------------- updates
+  // New versions of the plugin: the button over your photo (core/Updater.qml).
+  Updater { id: updaterObj; app: root }
+  readonly property alias updater: updaterObj
+
+  // ---------------------------------------------------------------- lifecycle
+  Component.onCompleted: {
+    Quickshell.execDetached(["mkdir", "-p", "-m", "700", root.configDir, root.cacheDir, root.dataDir])
+    Registry.service = root
+    root.ready = true
+    Qt.callLater(function() {
+      var active = root.setting("active", "")
+      root.currentTeam = root.accounts.some(function(a) { return a.teamId === active }) ? active : (root.accounts.length ? root.accounts[0].teamId : "")
+      // Images of files fetched with the session: a week unseen is enough.
+      // Their modification time is their last use (reused ones are touched:
+      // transport.py's `reuse`, Workspace.openFile), so what you keep
+      // looking at stays.
+      Quickshell.execDetached(["find", root.cacheDir + "/files", "-type", "f", "-mtime", "+7", "-delete"])
+    })
+  }
+
+  Component.onDestruction: {
+    if (Registry.service === root) Registry.service = null
+    if (root.settingsLoaded) settingsFile.setText(JSON.stringify(root.settings, null, 2))
+  }
+
+  IpcHandler {
+    target: "omaslack"
+    function toggle(): void { root.toggleWindow() }
+    function show(): void { root.showWindow() }
+    function hide(): void { root.hideWindow() }
+    function open(url: string): void { root.showWindow(); root.openUrl(url) }
+    function pause(minutes: int): void { root.pauseAll(minutes) }
+    function resume(): void { root.resumeAll() }
+    function status(): string {
+      return JSON.stringify({ signedIn: root.signedIn, attention: root.attention, paused: root.paused,
+                              workspaces: root.workspaces.map(function(w) { return { id: w.teamId, name: w.team.name, live: w.live, booted: w.booted } }) })
+    }
+  }
+}

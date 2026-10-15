@@ -1,0 +1,111 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+
+// The wire to Slack for one workspace: lib/transport.py, spoken to in JSON
+// lines. Calls come back to their callback; the socket's frames arrive as
+// signals. The process restarts itself if it ever dies.
+Item {
+  id: root
+
+  property string token: ""
+  property string cookie: ""
+  property bool enabled: true
+
+  readonly property string script: String(Qt.resolvedUrl("../lib/transport.py")).replace(/^file:\/\//, "")
+  property bool started: false
+  property bool socketOpen: false
+
+  signal socketOpened()
+  signal socketClosed(string reason)
+  signal socketMessage(var data)
+
+  property int _seq: 0
+  property var _pending: ({})
+  property var _queue: []
+
+  function _write(obj) {
+    var line = JSON.stringify(obj) + "\n"
+    if (root.started && proc.running) proc.write(line)
+    else root._queue.push(line)
+  }
+
+  function _sendCreds() { _write({ op: "creds", token: root.token, cookie: root.cookie }) }
+  onTokenChanged: _sendCreds()
+  onCookieChanged: _sendCreds()
+
+  function _request(obj, cb) {
+    var id = ++root._seq
+    obj.id = id
+    if (cb) root._pending[id] = cb
+    _write(obj)
+    return id
+  }
+
+  // Web API: cb({ok, status, body, error}).
+  function call(method, params, cb) { return _request({ op: "call", method: method, params: params || {} }, cb) }
+  // `reuse`: a file already at `dest` is kept (and marked as just used).
+  function download(url, dest, cb, htmlOk, reuse) { return _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse }, cb) }
+  function postFile(url, path, cb) { return _request({ op: "post_file", url: url, path: path }, cb) }
+  function multipart(method, fields, path, field, mime, cb) {
+    return _request({ op: "multipart", method: method, fields: fields || {}, path: path || "", field: field || "file", mime: mime || "" }, cb)
+  }
+  function readCookie(db, cb) { return _request({ op: "read_cookie", db: db }, cb) }
+  function openSocket(url) { _write({ op: "ws_open", url: url }) }
+  function sendSocket(data) { if (root.socketOpen) _write({ op: "ws_send", data: data }) }
+  function closeSocket() { _write({ op: "ws_close" }) }
+
+  function _line(text) {
+    if (!text) return
+    var msg
+    try { msg = JSON.parse(text) } catch (e) { console.warn("omaslack: bad transport line", text.slice(0, 200)); return }
+    if (msg.ws) {
+      if (msg.ws === "msg") root.socketMessage(msg.data)
+      else if (msg.ws === "open") { root.socketOpen = true; root.socketOpened() }
+      else if (msg.ws === "closed") { root.socketOpen = false; root.socketClosed(msg.reason || "") }
+      return
+    }
+    var cb = root._pending[msg.id]
+    if (cb) {
+      delete root._pending[msg.id]
+      try { cb(msg) } catch (e) { console.warn("omaslack: callback failed:", e, e.stack) }
+    }
+  }
+
+  Process {
+    id: proc
+    command: ["python3", "-u", "-I", root.script]
+    running: root.enabled
+    stdinEnabled: true
+    stdout: SplitParser { onRead: data => root._line(data) }
+    stderr: SplitParser { onRead: data => console.warn("omaslack transport:", data) }
+    onStarted: {
+      root.started = true
+      root._sendCreds()
+      var q = root._queue
+      root._queue = []
+      for (var i = 0; i < q.length; i++) proc.write(q[i])
+    }
+    onExited: (code, status) => {
+      root.started = false
+      if (root.socketOpen) { root.socketOpen = false; root.socketClosed("transport exited") }
+      var pending = root._pending
+      root._pending = ({})
+      for (var id in pending) {
+        try { pending[id]({ ok: false, error: "transport exited" }) } catch (e) {}
+      }
+      if (root.enabled) restartTimer.restart()
+    }
+  }
+
+  Timer {
+    id: restartTimer
+    interval: 1500
+    onTriggered: if (root.enabled && !proc.running) proc.running = true
+  }
+
+  Component.onDestruction: {
+    root.enabled = false
+    if (proc.running) proc.signal(15)
+  }
+}
