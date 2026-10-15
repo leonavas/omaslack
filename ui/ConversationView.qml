@@ -25,9 +25,9 @@ Item {
 
   readonly property string readOnly: {
     if (!c) return ""
+    if ((other && other.deleted) || (c.kind === "im" && c.userDeleted)) return "deactivated"
     if (c.archived) return "archived"
     if (c.guest || c.member === false) return "guest"
-    if (other && other.deleted) return "deactivated"
     return ""
   }
 

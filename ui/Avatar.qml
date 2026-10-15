@@ -64,8 +64,9 @@ Item {
     anchors.bottomMargin: -2
     size: Math.max(8, Math.round(a.size * 0.3))
     ring: a.ring
-    active: a.ws ? a.ws.isActive(a.user) : false
-    paused: a.ws ? a.ws.isPaused(a.user) : false
+    // A deactivated account: always Slack's hollow ring.
+    active: a.ws && !(a.u && a.u.deleted) ? a.ws.isActive(a.user) : false
+    paused: a.ws && !(a.u && a.u.deleted) ? a.ws.isPaused(a.user) : false
   }
 
   MouseArea {

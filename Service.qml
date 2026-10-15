@@ -6,10 +6,10 @@ import qs.Commons
 import "core"
 import "ui"
 import "lib/Util.js" as U
-import "lib/Model.js" as Model
-import "lib/Mrkdwn.js" as Md
+import "lib/Bar.js" as Bar
 import "lib/Registry.js" as Registry
 import "lib/Emoji.js" as Emoji
+import "lib/Demo.js" as Demo
 
 // The whole app, once per shell: the signed-in workspaces, preferences,
 // the window, the sign-in flow and desktop notifications. The bar widget
@@ -47,9 +47,23 @@ Item {
   readonly property bool compact: setting("spacing", "comfortable") === "compact"
   readonly property bool unreadBar: setting("unreadBar", true) !== false
   readonly property bool unreadBackground: setting("unreadBackground", false) === true
-  readonly property bool notificationsOn: setting("notifications", true) !== false
+  // Desktop notifications and their text are the bar widget's settings
+  // ("notifications", "notificationText", pushed in `barOptions`); the app's
+  // own stand in while no widget is on the bar. A switch in Preferences
+  // writes both (setNotifySetting).
+  readonly property bool notificationsOn: root.barOptions.notifications !== undefined ? root.barOptions.notifications !== false
+                                                                                     : setting("notifications", true) !== false
+  readonly property bool previewOn: root.barOptions.notificationText !== undefined ? root.barOptions.notificationText !== false
+                                                                                   : setting("notificationPreview", true) !== false
   readonly property bool soundOn: setting("sound", true) !== false
-  readonly property bool previewOn: setting("notificationPreview", true) !== false
+  // The bar widget that writes its settings (shell.json), set while one is
+  // on the bar.
+  property var barWidget: null
+  function setNotifySetting(key, value) {
+    root.setSetting(key, value)
+    var bw = root.barWidget
+    if (bw && typeof bw.writeSetting === "function") bw.writeSetting(key === "notificationPreview" ? "notificationText" : key, value)
+  }
   readonly property real zoom: setting("zoom", 1.0)
   readonly property bool slackEmoji: setting("emojiStyle", "slack") !== "system"
   function tr(en, pt) { return root.lang === "pt-BR" ? pt : en }
@@ -96,15 +110,15 @@ Item {
     blockLoading: true
     onLoaded: {
       try { root.accounts = (JSON.parse(text()) || {}).accounts || [] } catch (e) { root.accounts = [] }
-      if (root.demo) root.accounts = [{ teamId: "T0DEMO", demo: true, token: "", cookie: "", domain: "acme", name: "Acme", userId: "U0ME" }]
+      if (root.demo) root.accounts = Demo.accounts.slice()
       root.accountsLoaded = true
     }
     onLoadFailed: {
-      root.accounts = root.demo ? [{ teamId: "T0DEMO", demo: true, token: "", cookie: "", domain: "acme", name: "Acme", userId: "U0ME" }] : []
+      root.accounts = root.demo ? Demo.accounts.slice() : []
       root.accountsLoaded = true
     }
   }
-  // A pretend workspace (lib/Demo.js), for trying the app without signing in.
+  // Pretend workspaces (lib/Demo.js), for trying the app without signing in.
   readonly property bool demo: Quickshell.env("SLACKQS_DEMO") === "1"
 
   function saveAccounts() {
@@ -492,7 +506,7 @@ Item {
   // The window is Quickshell's, and its app id (org.quickshell) is the whole
   // shell's, so docks would draw Quickshell's icon for it. A Hyprland tag,
   // "icon:<path>", names ours for the bar widgets that read it
-  // (leonavas.spaces). Hiding the window closes it for Hyprland, so it's
+  // (a workspaces or dock widget). Hiding the window closes it for Hyprland, so it's
   // tagged on every open (and on every raise, for a window kept across a
   // shell reload); adding a tag it already has changes nothing.
   readonly property string appIcon: root.pluginDir + "/assets/slack.svg"
@@ -661,51 +675,90 @@ Item {
   }
 
   // ---------------------------------------------------------------- notifications
-  Component {
-    id: notifyComponent
-    Process {
-      property var info: null
-      stdout: StdioCollector {
-        onStreamFinished: {
-          if (String(text).trim() === "open" && parent && parent.info) root.openConversation(parent.info.team, parent.info.conv, parent.info.ts, parent.info.threadTs)
-        }
-      }
-      onExited: destroy()
-    }
-  }
-
+  // One notification per message that notifies you in Slack
+  // (Workspace.maybeNotify: DMs, mentions, channels set to every message,
+  // replies in threads you follow) and per reaction to your messages (but
+  // not in a muted channel, Workspace.maybeNotifyReaction); none
+  // while paused (Slack's do-not-disturb) or for the conversation open on
+  // screen. The summary is who wrote, and where outside a DM; the body the
+  // message with its bold, italic and strikethrough (or only "New message");
+  // the icon their photo. A click runs, in Omarchy's notification center,
+  // the IPC call that opens the conversation at that message, so it still
+  // works after a shell restart. A message heard twice (the socket and a
+  // catch-up fetch) notifies once.
   property real _lastSound: 0
+  property var _notifiedIds: ({})
+  property var _notifiedOrder: []
+
+  function firstNotice(key) {
+    if (root._notifiedIds[key]) return false
+    root._notifiedIds[key] = true
+    root._notifiedOrder.push(key)
+    while (root._notifiedOrder.length > 200) delete root._notifiedIds[root._notifiedOrder.shift()]
+    return true
+  }
 
   function notifyFrom(w, info) {
     if (!root.notificationsOn || Quickshell.env("SLACKQS_READONLY") === "1") return
-    var title = "", body = ""
+    var reaction = info.kind === "reaction"
+    if (!root.firstNotice([info.team, info.conv, info.ts, reaction ? info.reaction + "/" + info.user : ""].join("|"))) return
     var c = w.conv(info.conv)
     var label = w.convLabel(info.conv)
-    var ctx = w.renderCtx(themeObj.html, 16)
-    if (info.kind === "reaction") {
-      var who = w.userName(info.user) || "?"
-      title = who
-      var glyph = Emoji.standard(info.reaction) || (":" + info.reaction + ":")
-      body = root.tr("reacted ", "reagiu com ") + glyph + root.tr(" to your message", " à sua mensagem")
+    var where = !c || c.kind === "im" ? "" : c.kind === "mpim" ? label : "#" + label
+    var title = "", body = "", photo = ""
+    if (reaction) {
+      var who = w.userName(info.user) || root.tr("Someone", "Alguém")
+      var reactor = w.user(info.user)
+      photo = reactor ? String(reactor.avatar || "") : ""
+      title = where ? who + " · " + where : who
+      if (info.threadTs) title += root.tr(" (thread)", " (conversa)")
+      // The emoji as a character; the workspace's own as :name:, as the
+      // message bodies have them. Then the message, with its text on.
+      var r = Emoji.resolve(info.reaction, {}, w.emojiAliases)
+      var glyph = r && r.glyph ? r.glyph : ":" + String(info.reaction).split("::")[0] + ":"
+      body = U.escapeHtml(root.tr("reacted ", "reagiu com ") + glyph + root.tr(" to your message", " à sua mensagem"))
+      var said = root.previewOn && info.msg ? Bar.notificationHtml(info.msg, w.renderCtx(themeObj.html, 16)) : ""
+      if (said) body += ": " + said
     } else {
       var m = info.msg
-      var author = w.author(m).name || "?"
-      var text = Md.flat(m, ctx, 300)
-      if (c && Model.isDm(c) && c.kind === "im") { title = author; body = text }
-      else { title = (c && c.kind === "mpim" ? "" : "#") + label + (info.threadTs ? root.tr(" (thread)", " (conversa)") : ""); body = author + ": " + text }
-      if (!root.previewOn) body = root.tr("New message", "Nova mensagem")
+      var a = w.author(m)
+      var person = m.user ? w.user(m.user) : null
+      photo = a.icon || (person ? String(person.avatar || "") : "")
+      title = (a.name || label || "?") + (where ? " · " + where : "")
+      if (info.threadTs) title += root.tr(" (thread)", " (conversa)")
+      body = root.previewOn ? Bar.notificationHtml(m, w.renderCtx(themeObj.html, 16)) : ""
+      if (!body) body = root.tr("New message", "Nova mensagem")
     }
     if (root.workspaces.length > 1) title += " · " + (w.team.name || "")
-    var icon = root.appIcon
-    var p = notifyComponent.createObject(root, {
-      info: info,
-      command: ["notify-send", "-a", "Slack", "-i", icon, "-A", "open=" + root.tr("Open", "Abrir"), "--wait", title, body]
-    })
-    p.running = true
+    var open = info.threadTs ? ["omarchy-shell", "-q", "omaslack", "openThread", String(info.team), String(info.conv), String(info.ts), String(info.threadTs)]
+                             : ["omarchy-shell", "-q", "omaslack", "openAt", String(info.team), String(info.conv), String(info.ts)]
+    root.sendNotification(title, body, photo, open)
     if (root.soundOn && Date.now() - root._lastSound > 1500) {
       root._lastSound = Date.now()
       Quickshell.execDetached(["sh", "-c", 'for f in /usr/share/sounds/freedesktop/stereo/message-new-instant.oga /usr/share/sounds/freedesktop/stereo/message.oga; do [ -f "$f" ] && exec pw-play "$f"; done; exit 0'])
     }
+  }
+
+  // The photo is fetched once into the cache, by its URL (a new photo is a
+  // new file; a week unused and it goes, as the files do); Slack's mark
+  // while it is missing or didn't come. One drawn inline (an SVG data URL,
+  // the demo's) is written there as it is. `open` is the click's argv.
+  function sendNotification(title, body, photo, open) {
+    var url = String(photo || "")
+    var svgUrl = "data:image/svg+xml;utf8,"
+    var drawn = url.indexOf(svgUrl) === 0 ? decodeURIComponent(url.slice(svgUrl.length)) : ""
+    var ext = drawn ? "svg" : ((url.match(/\.(png|jpe?g|gif|webp)(?:[?#]|$)/i) || [])[1] || "jpg").toLowerCase()
+    var file = url.indexOf("https://") === 0 || drawn ? root.cacheDir + "/files/avatars/" + Qt.md5(url) + "." + ext : ""
+    Quickshell.execDetached(["bash", "-c",
+      'f="$1"; u="$2"; icon="$3"; drawn="$4"; shift 4; '
+      + 'if [ -n "$f" ]; then '
+      + '[ -s "$f" ] && touch "$f" || { mkdir -p "${f%/*}" && { if [ -n "$drawn" ]; then printf %s "$drawn" > "$f.part"; else curl -fsSL -m 4 -o "$f.part" "$u"; fi; } '
+      + '&& mv -f "$f.part" "$f" || rm -f "$f.part"; }; '
+      + '[ -s "$f" ] && icon="$f"; '
+      + 'fi; '
+      + 'exec notify-send "--icon=$icon" "$@"',
+      "slack-notify", file, url, root.appIcon, drawn,
+      "--app-name=Slack", "--hint=string:omarchy-exec-argv:" + JSON.stringify(open), title, body])
   }
 
   // ---------------------------------------------------------------- utilities
@@ -755,8 +808,19 @@ Item {
     function show(): void { root.showWindow() }
     function hide(): void { root.hideWindow() }
     function open(url: string): void { root.showWindow(); root.openUrl(url) }
+    // A notification's click: the conversation (or the thread) at that message.
+    function openAt(team: string, conv: string, ts: string): void { root.openConversation(team, conv, ts, "") }
+    function openThread(team: string, conv: string, ts: string, threadTs: string): void { root.openConversation(team, conv, ts, threadTs) }
     function pause(minutes: int): void { root.pauseAll(minutes) }
     function resume(): void { root.resumeAll() }
+    // Demo mode only (SLACKQS_DEMO=1): something happens in the workspace
+    // you're in, as its socket would tell it: "reaction" (people react to
+    // one of your messages) or "message" (a new DM).
+    function demoEvent(kind: string): string {
+      if (!root.demo || !root.current) return "demo mode only"
+      root.current.playDemo(kind)
+      return "ok"
+    }
     function status(): string {
       return JSON.stringify({ signedIn: root.signedIn, attention: root.attention, paused: root.paused,
                               workspaces: root.workspaces.map(function(w) { return { id: w.teamId, name: w.team.name, live: w.live, booted: w.booted } }) })

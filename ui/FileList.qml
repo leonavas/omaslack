@@ -41,9 +41,11 @@ Flow {
       }
       SlackImage {
         app: fl.app
-        readonly property string local: fl.ws.localFile(parent.f.thumb)
-        source: local ? "file://" + local : ""
-        Component.onCompleted: if (!local) Qt.callLater(function() { fl.ws.fetchFile(parent.f.thumb, parent.f.id + "-thumb-" + parent.f.name) })
+        // A picture given inline (a data: URL, the demo's) needs no download.
+        readonly property bool inline: String(parent.f.thumb).indexOf("data:") === 0
+        readonly property string local: inline ? "" : fl.ws.localFile(parent.f.thumb)
+        source: inline ? parent.f.thumb : local ? "file://" + local : ""
+        Component.onCompleted: if (!inline && !local) Qt.callLater(function() { fl.ws.fetchFile(parent.f.thumb, parent.f.id + "-thumb-" + parent.f.name) })
         natW: parent.f.w
         natH: parent.f.h
         maxW: Math.min(fl.width, fl.t.sp(480))

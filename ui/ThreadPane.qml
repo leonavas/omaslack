@@ -121,7 +121,8 @@ Rectangle {
     ws: tp.ws
     conv: tp.conv
     threadTs: tp.ts
-    visible: !!tp.c && !tp.c.archived && tp.c.member !== false
+    // Not in an archived channel, nor a deactivated account's archives.
+    visible: !!tp.c && !tp.c.archived && tp.c.member !== false && !(tp.c.kind === "im" && (tp.c.userDeleted || !!(tp.ws.user(tp.c.user) || {}).deleted))
   }
 
   onTsChanged: Qt.callLater(function() { box.focusInput() })

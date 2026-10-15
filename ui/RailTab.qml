@@ -11,7 +11,9 @@ Item {
   property string label: ""
   property bool active: false
   property bool dot: false
+  property color dotColor: t.badge
   property int count: 0
+  readonly property bool hovered: ma.containsMouse
   signal clicked()
   width: t.sp(56)
   height: t.sp(52)
@@ -45,7 +47,7 @@ Item {
     Rectangle {
       visible: tab.dot && tab.count === 0
       width: tab.t.sp(9); height: width; radius: width / 2
-      color: tab.t.badge
+      color: tab.dotColor
       border.width: 2
       border.color: tab.t.frame
       anchors.right: parent.right

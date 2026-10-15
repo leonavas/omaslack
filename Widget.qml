@@ -7,8 +7,8 @@ import qs.Ui
 import "lib/Registry.js" as Registry
 import "lib/Bar.js" as Bar
 
-// The bar's door into the Slack client, the way the leonavas.slack widget
-// (the one that drives slick) does it: Slack's mark in white with a faint
+// The bar's door into the Slack client, the way slick's bar widget does
+// it: Slack's mark in white with a faint
 // outline, a red badge for DMs and a blue one for channels, a preview of
 // what is waiting on hover, the reactions to your messages floating out of
 // the icon, and a menu on right click. The app itself is the plugin's
@@ -45,6 +45,7 @@ BarWidget {
   readonly property bool closeOnMiddle: setting("middleClickCloses", true) !== false
   readonly property bool hoverPreview: setting("hoverPreview", true) !== false
   readonly property int previewRows: Math.max(1, Number(setting("previewRows", 6)))
+  readonly property int previewMessages: Math.max(1, Math.min(5, Number(setting("previewMessages", 3))))
   readonly property bool previewChannels: setting("previewChannels", false) === true
   readonly property bool showReactions: setting("showReactions", true) !== false
   // Threads you follow: their new replies count in the badges (mentions red,
@@ -53,15 +54,22 @@ BarWidget {
   // Channels count only when they mention you: no blue badge or row for the
   // channels that notify you, all of them in the footer.
   readonly property bool channelMentionsOnly: setting("channelMentionsOnly", false) === true
+  // Desktop notifications and their text. Absent from the bar's entry, the
+  // app's own switches (Preferences, before they moved here) still count.
+  readonly property bool desktopNotifications: setting("notifications",
+    root.service ? root.service.setting("notifications", true) !== false : true) !== false
+  readonly property bool notificationText: setting("notificationText",
+    root.service ? root.service.setting("notificationPreview", true) !== false : true) !== false
   readonly property string mutedIndicator: String(setting("mutedIndicator", "Bell"))
 
   // ------------------------------------------------------------------- theme
   readonly property color foreground: bar ? bar.barForeground : Color.foreground
   readonly property color urgentColor: bar ? bar.urgent : Color.urgent
-  // A red for DMs and group DMs, a blue for channels. An empty setting falls
-  // back to the theme's urgent color.
+  // A red for DMs and group DMs, a blue for channels. An empty DM color
+  // falls back to the theme's urgent color, an empty channel color to the
+  // DM one.
   readonly property color directColor: root.dmColorSetting.length > 0 ? root.dmColorSetting : root.urgentColor
-  readonly property color channelColor: root.channelColorSetting.length > 0 ? root.channelColorSetting : root.urgentColor
+  readonly property color channelColor: root.channelColorSetting.length > 0 ? root.channelColorSetting : root.directColor
   readonly property color badgeDigitColor: "#ffffff"
   readonly property color badgeTextColor: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 1)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -87,17 +95,38 @@ BarWidget {
 
   // ------------------------------------------------------------------ window
   // What slick's window was there is ours here: open (mapped), parked in the
-  // special workspace, focused. The service moves it; these settings go to
-  // it.
+  // special workspace, focused. The service moves it and sends the
+  // notifications; these settings go to it, and it writes the app's
+  // toggles of the notifications back here (writeSetting).
   readonly property bool running: !!root.service && root.service.windowOpen
   readonly property bool focused: !!root.service && root.service.windowFocused
   readonly property bool parked: !!root.service && root.service.parked
   readonly property bool specialShown: !!root.service && root.service.specialShown
   readonly property var windowOptions: ({ specialName: root.specialName, openInSpecial: root.openInSpecial,
-                                          hideMode: root.hideMode, launchForeground: root.launchForeground })
+                                          hideMode: root.hideMode, launchForeground: root.launchForeground,
+                                          notifications: root.desktopNotifications, notificationText: root.notificationText })
   onWindowOptionsChanged: root.pushOptions()
   onServiceChanged: root.pushOptions()
-  function pushOptions() { if (root.service) root.service.barOptions = root.windowOptions }
+  function pushOptions() {
+    if (!root.service) return
+    root.service.barOptions = root.windowOptions
+    root.service.barWidget = root
+  }
+  // Gone (a bar rebuilt, a monitor unplugged): a copy on another monitor
+  // takes over; with none left, the app's own switches count again.
+  Component.onDestruction: {
+    var s = root.service
+    if (!s || s.barWidget !== root) return
+    var peers = []
+    try { if (root.bar && typeof root.bar.moduleWidgets === "function") peers = root.bar.moduleWidgets(root.moduleName) } catch (e) { peers = [] }
+    var next = peers.filter(function(p) { return p && p !== root })[0] || null
+    s.barWidget = next
+    if (next) return
+    var options = JSON.parse(JSON.stringify(s.barOptions || {}))
+    delete options.notifications
+    delete options.notificationText
+    s.barOptions = options
+  }
 
   // Signed out is what slick not running (or not installed) was there: a
   // dimmed mark, and a card that leads to the sign-in.
@@ -127,7 +156,8 @@ BarWidget {
   readonly property var htmlColors: root.service ? root.service.theme.html : ({})
   readonly property int emojiPx: Math.round(Style.font.bodySmall * 1.1)
   readonly property var preview: root.popupOpen && root.slackState
-    ? Bar.previewRows(root.slackState, root.previewRows, root.previewChannels, root.channelMentionsOnly, root.htmlColors, root.emojiPx) : root.emptyRows
+    ? Bar.previewRows(root.slackState, root.previewRows, root.previewMessages, root.previewChannels, root.channelMentionsOnly,
+                      root.htmlColors, root.emojiPx) : root.emptyRows
   // Reactions to your messages: listed in the card, never counted in a badge.
   readonly property var reactions: root.showReactions && root.popupOpen && root.slackState
     ? Bar.reactionRows(root.slackState, root.previewRows, root.htmlColors, root.emojiPx, root.lang) : root.emptyRows
@@ -342,7 +372,8 @@ BarWidget {
   // glyph; Glyph is any Nerd Font character.
   readonly property url monoIconSource: Qt.resolvedUrl("assets/slack-mono.svg")
   readonly property url colorIconSource: Qt.resolvedUrl("assets/slack.svg")
-  readonly property color tintColor: root.dmCount > 0 || root.combinedBadge ? root.directColor : root.channelColor
+  // Tinted: red while a DM waits, blue while only channels do.
+  readonly property color tintColor: root.dmCount > 0 ? root.directColor : root.channelColor
   readonly property color glyphColor: root.anyBadge && root.tintWhenUnread ? root.tintColor : root.foreground
   readonly property int glyphPixelSize: root.glyphSize > 0 ? root.glyphSize : Math.max(8, Style.bar.iconFont)
   // A pause you set fades the mark under the bell-off.
@@ -360,8 +391,10 @@ BarWidget {
     ? Bar.channelBadgeCount(root.slackState, root.channelBadgeMode, root.channelMentionsOnly)
       + (root.threadBadges ? Bar.threadBadgeCount(root.slackState, root.channelBadgeMode) : 0) : 0
   readonly property bool anyBadge: root.dmCount > 0 || root.channelCount > 0
-  // "Combined" folds both into one badge in the DM color and corner.
+  // "Combined" folds both into one badge in the DM corner: red while a DM
+  // waits, blue when only channels do.
   readonly property int combinedCount: root.dmCount + root.channelCount
+  readonly property color combinedColor: root.dmCount > 0 ? root.directColor : root.channelColor
 
   // Which corner each badge takes. Change these two to move them.
   readonly property string dmCorner: "bottom-right"
@@ -546,7 +579,7 @@ BarWidget {
   CornerBadge {
     count: root.combinedBadge ? root.combinedCount : root.dmCount
     corner: root.dmCorner
-    color: root.directColor
+    color: root.combinedBadge ? root.combinedColor : root.directColor
   }
 
   CornerBadge {
@@ -579,15 +612,23 @@ BarWidget {
   }
 
   // A reaction's emoji: Slack's picture of it (animated when it is a GIF),
-  // or its character. `size` is the font size it sits next to.
+  // or its character. `size` is the font size it sits next to. A picture
+  // that doesn't come gives way to the character (or :name:), and so does
+  // one still loading when `textOnly` is set.
   component EmojiGlyph: Item {
     id: emojiGlyph
 
     property var visual: null
     property int size: Style.font.bodySmall
     property color color: root.foreground
-    readonly property bool isImage: !!emojiGlyph.visual && String(emojiGlyph.visual.image || "").length > 0
-    readonly property bool isAnimated: emojiGlyph.isImage && emojiGlyph.visual.animated === true
+    property bool textOnly: false
+    readonly property bool hasImage: !!emojiGlyph.visual && String(emojiGlyph.visual.image || "").length > 0
+    readonly property bool isAnimated: emojiGlyph.hasImage && emojiGlyph.visual.animated === true
+    readonly property int imageStatus: emojiGlyph.isAnimated ? animatedPicture.status : picture.status
+    // The picture is in, or it didn't come (nothing to wait for then).
+    readonly property bool settled: !emojiGlyph.hasImage || emojiGlyph.imageStatus === Image.Ready
+      || emojiGlyph.imageStatus === Image.Error
+    readonly property bool isImage: emojiGlyph.hasImage && !emojiGlyph.textOnly && emojiGlyph.imageStatus !== Image.Error
     readonly property int box: Math.round(emojiGlyph.size * 1.25)
 
     implicitWidth: emojiGlyph.isImage ? emojiGlyph.box : emojiText.implicitWidth
@@ -596,8 +637,9 @@ BarWidget {
     height: implicitHeight
 
     AnimatedImage {
+      id: animatedPicture
       anchors.fill: parent
-      visible: emojiGlyph.isAnimated
+      visible: emojiGlyph.isImage && emojiGlyph.isAnimated
       source: emojiGlyph.isAnimated ? emojiGlyph.visual.image : ""
       playing: visible
       fillMode: Image.PreserveAspectFit
@@ -605,9 +647,10 @@ BarWidget {
     }
 
     Image {
+      id: picture
       anchors.fill: parent
       visible: emojiGlyph.isImage && !emojiGlyph.isAnimated
-      source: visible ? emojiGlyph.visual.image : ""
+      source: emojiGlyph.hasImage && !emojiGlyph.isAnimated ? emojiGlyph.visual.image : ""
       sourceSize.width: Math.round(emojiGlyph.box * Screen.devicePixelRatio)
       sourceSize.height: Math.round(emojiGlyph.box * Screen.devicePixelRatio)
       fillMode: Image.PreserveAspectFit
@@ -696,6 +739,12 @@ BarWidget {
       property int delay: 0
       readonly property real from: bubbles.start
       readonly property real to: bubbles.start + bubbles.direction * bubbles.travel
+      // Slack's picture comes over the network, where slick's was a file
+      // at hand: the bubble rises once it is in (or didn't come), and after
+      // a couple of seconds as the character (or :name:) instead, so it
+      // never flies empty.
+      property bool gaveUp: false
+      readonly property bool ready: bubbleGlyph.settled || bubble.gaveUp
 
       width: bubbles.size
       height: bubbles.size
@@ -705,13 +754,21 @@ BarWidget {
       scale: 0.8
 
       EmojiGlyph {
+        id: bubbleGlyph
         anchors.centerIn: parent
         visual: bubble.visual
         size: Math.round(bubbles.size / 1.25)
+        textOnly: bubble.gaveUp
+      }
+
+      Timer {
+        interval: 2500
+        running: !bubbleGlyph.settled
+        onTriggered: bubble.gaveUp = true
       }
 
       SequentialAnimation {
-        running: true
+        running: bubble.ready
         PauseAnimation { duration: bubble.delay }
         PropertyAction { target: bubble; property: "opacity"; value: 1 }
         ParallelAnimation {
@@ -853,18 +910,39 @@ BarWidget {
       spacing: Style.space(6)
       visible: !root.notSignedIn
 
-      Text {
-        textFormat: Text.PlainText
+      Row {
         width: parent.width
-        text: {
-          var team = root.slackState && root.slackState.team ? root.slackState.team : "Slack"
-          return root.attention > 0 ? team + " · " + root.attention + root.tr(" waiting", " aguardando") : team
+        spacing: Style.space(6)
+
+        Image {
+          id: headerMark
+          readonly property int box: Math.round(Style.font.bodySmall * 1.2)
+          width: box
+          height: box
+          anchors.verticalCenter: parent.verticalCenter
+          source: root.colorIconSource
+          sourceSize.width: Math.round(box * Screen.devicePixelRatio)
+          sourceSize.height: Math.round(box * Screen.devicePixelRatio)
+          fillMode: Image.PreserveAspectFit
+          smooth: true
         }
-        color: popup.fg
-        elide: Text.ElideRight
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        font.bold: true
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width - headerMark.width - parent.spacing
+          // A workspace's socket down: reconnecting, the counts are the last
+          // known.
+          text: {
+            var team = root.slackState && root.slackState.team ? root.slackState.team : "Slack"
+            return (root.attention > 0 ? team + " · " + root.attention + root.tr(" waiting", " aguardando") : team)
+              + (root.slackState && root.slackState.connecting ? root.tr(" · connecting…", " · conectando…") : "")
+          }
+          color: popup.fg
+          elide: Text.ElideRight
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+        }
       }
 
       // Paused (or in Slack's scheduled DND): when it ends, and a way out.
@@ -1648,14 +1726,15 @@ BarWidget {
           }
         }
 
-        // The app's own switch (its Preferences), not the bar's.
+        // The bar's setting, which the app's Preferences switch also writes.
         MenuEntry {
           label: root.tr("Desktop notifications", "Notificações na área de trabalho")
           showCheck: true
-          checked: !!menu.s && menu.s.notificationsOn
+          checked: root.desktopNotifications
           onActivated: {
             root.close()
-            if (menu.s) menu.s.setSetting("notifications", !menu.s.notificationsOn)
+            if (menu.s) menu.s.setNotifySetting("notifications", !root.desktopNotifications)
+            else root.writeSetting("notifications", !root.desktopNotifications)
           }
         }
 

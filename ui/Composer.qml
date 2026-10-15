@@ -40,10 +40,11 @@ Rectangle {
   // The document, and what the editor shows of it.
   property var doc: RD.empty()
   property var typing: null      // {pos, f}: marks for what's typed next (B / I… with nothing selected)
-  property var marks: ({ b: false, i: false, x: false, c: false, link: "", k: "p", n: 0 })
+  property var marks: ({ b: false, i: false, u: false, x: false, c: false, link: "", k: "p", n: 0 })
   property string acText: ""     // the text with pills masked, for the autocomplete
   property bool hasText: false
   property var decos: []         // quote bars and code boxes: [{k, y, h}]
+  property var gifs: []          // animated emoji playing over the text: [{key, url, x, y}]
   property var undos: []
   property var redos: []
   property var _clip: null       // the last copy out of the box: {text, lines}
@@ -63,10 +64,10 @@ Rectangle {
   onLookChanged: if (!box._rendering) { if (box._dirty) box.flush(); else box.render(input.cursorPosition, box.anchorPos()) }
 
   implicitHeight: col.implicitHeight + 2
-  radius: Math.max(8, t.radiusCard)
+  radius: t.sp(8)
   color: t.alpha(t.fg, 0.02)
   border.width: 1
-  border.color: input.activeFocus ? t.alpha(t.fg, 0.45) : t.lineStrong
+  border.color: input.activeFocus ? t.alpha(t.fg, 0.3) : t.lineStrong
 
   function focusInput() { input.forceActiveFocus() }
   // Box markup (Slack's markup with its wire references) into the box.
@@ -91,7 +92,7 @@ Rectangle {
 
   // An emoji's picture as the app draws it elsewhere: Slack's image of a
   // standard one (or the system glyph when set so), the workspace's own.
-  // Animated ones stand still in the box.
+  // Animated ones play over the text (`gifs`).
   function emojiFor(name, tone) {
     if (!box.ws) return null
     var r = Emoji.resolve(tone ? name + "::skin-tone-" + tone : name, box.ws.customEmoji, box.ws.emojiAliases)
@@ -103,7 +104,7 @@ Rectangle {
 
   function rctx() {
     return { c: box.t.html, mono: "monospace", emojiPx: box.t.emojiPx, me: box.ws && box.ws.me ? box.ws.me.id : "",
-             quotePad: box.t.sp(14), codePad: box.t.sp(8), gap: box.t.sp(4) }
+             quotePad: box.t.sp(14), codePad: box.t.sp(8), gap: box.t.sp(4), blank: String(Qt.resolvedUrl("../assets/blank.png")) }
   }
 
   // @here / #channel typed by hand become Slack's references on the way out.
@@ -193,7 +194,11 @@ Rectangle {
 
   function updateMarks() { box.marks = RD.marksAt(box.doc, input.selectionStart, input.selectionEnd, box.typing) }
 
-  // Where the quote bars and code boxes go, behind the text.
+  // Where the quote bars and code boxes go, behind the text, and where the
+  // animated emoji play: on the see-through picture that holds their place,
+  // centered in the line the way the text draws it. An emoji keeps its
+  // player while the text moves it: it's known by its picture and which
+  // one of that picture it is.
   function layoutDecos() {
     if (box._dirty) return
     var out = []
@@ -202,6 +207,12 @@ Rectangle {
       out.push({ k: g.k, y: a.y, h: b.y + b.height - a.y })
     })
     box.decos = out
+    var px = box.t.emojiPx, nth = {}
+    box.gifs = RD.gifs(box.doc).map(function(e) {
+      var r = input.positionToRectangle(e.pos)
+      nth[e.url] = (nth[e.url] || 0) + 1
+      return { key: e.url + "#" + nth[e.url], url: e.url, x: Math.round(r.x), y: Math.round(r.y + (r.height - px) / 2) }
+    })
   }
 
   // The cursor moved: never inside a pill; the toolbar and the
@@ -319,7 +330,7 @@ Rectangle {
   }
 
   // ---------------------------------------------------------------- formatting
-  // B / I / S / code: on the selection, or for what's typed next.
+  // B / I / U / S / code: on the selection, or for what's typed next.
   function toggleMark(m) {
     input.forceActiveFocus()
     if (box.marks.k === "pre") return
@@ -519,25 +530,28 @@ Rectangle {
     y: 1
     width: parent.width - 2
 
-    // Formatting bar: what's on at the cursor shows as on.
+    // Formatting bar: what's on at the cursor shows as on. Slack's: faint
+    // icons, in groups set apart by a wider gap.
     Row {
+      id: fmtBar
       visible: box.showFormatting && !box.editing
       x: box.t.sp(6)
       height: visible ? box.t.sp(36) : 0
-      spacing: box.t.sp(1)
+      spacing: box.t.sp(4)
       readonly property bool inCode: box.marks.k === "pre"
-      FmtButton { app: box.app; icon: "󰉤"; active: box.marks.b; dim: parent.inCode; tip: box.app.tr("Bold", "Negrito") + "  Ctrl+B"; onClicked: box.toggleMark("b") }
-      FmtButton { app: box.app; icon: "󰉷"; active: box.marks.i; dim: parent.inCode; tip: box.app.tr("Italic", "Itálico") + "  Ctrl+I"; onClicked: box.toggleMark("i") }
-      FmtButton { app: box.app; icon: "󰊁"; active: box.marks.x; dim: parent.inCode; tip: box.app.tr("Strikethrough", "Tachado") + "  Ctrl+Shift+X"; onClicked: box.toggleMark("x") }
-      Rectangle { width: 1; height: box.t.sp(18); color: box.t.line; anchors.verticalCenter: parent.verticalCenter }
-      FmtButton { app: box.app; icon: "󰌷"; active: box.marks.link !== ""; dim: parent.inCode; tip: box.app.tr("Link", "Link") + "  Ctrl+Shift+U"; onClicked: box.insertLink() }
-      Rectangle { width: 1; height: box.t.sp(18); color: box.t.line; anchors.verticalCenter: parent.verticalCenter }
-      FmtButton { app: box.app; icon: "󰉻"; active: box.marks.k === "ol"; tip: box.app.tr("Numbered list", "Lista numerada") + "  Ctrl+Shift+7"; onClicked: box.toggleKind("ol") }
-      FmtButton { app: box.app; icon: "󰉹"; active: box.marks.k === "ul"; tip: box.app.tr("Bulleted list", "Lista com marcadores") + "  Ctrl+Shift+8"; onClicked: box.toggleKind("ul") }
-      Rectangle { width: 1; height: box.t.sp(18); color: box.t.line; anchors.verticalCenter: parent.verticalCenter }
-      FmtButton { app: box.app; icon: "󰝗"; active: box.marks.k === "q"; tip: box.app.tr("Quote", "Citação") + "  Ctrl+Shift+9"; onClicked: box.toggleKind("q") }
-      FmtButton { app: box.app; icon: "󰅴"; active: box.marks.c; dim: parent.inCode; tip: box.app.tr("Code", "Código") + "  Ctrl+Shift+C"; onClicked: box.toggleMark("c") }
-      FmtButton { app: box.app; icon: "󰅩"; active: parent.inCode; tip: box.app.tr("Code block", "Bloco de código") + "  Ctrl+Alt+Shift+C"; onClicked: box.toggleKind("pre") }
+      readonly property color tone: box.t.alpha(box.t.fgDim, input.activeFocus ? 0.9 : 0.6)
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.b; dim: parent.inCode; tip: box.app.tr("Bold", "Negrito") + "  Ctrl+B"; onClicked: box.toggleMark("b") }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.i; dim: parent.inCode; tip: box.app.tr("Italic", "Itálico") + "  Ctrl+I"; onClicked: box.toggleMark("i") }
+      FmtButton { app: box.app; icon: "󰊇"; tone: fmtBar.tone; active: box.marks.u; dim: parent.inCode; tip: box.app.tr("Underline", "Sublinhado"); onClicked: box.toggleMark("u") }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.x; dim: parent.inCode; tip: box.app.tr("Strikethrough", "Tachado") + "  Ctrl+Shift+X"; onClicked: box.toggleMark("x") }
+      Item { width: box.t.sp(4); height: 1 }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.link !== ""; dim: parent.inCode; tip: box.app.tr("Link", "Link") + "  Ctrl+Shift+U"; onClicked: box.insertLink() }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "ol"; tip: box.app.tr("Numbered list", "Lista numerada") + "  Ctrl+Shift+7"; onClicked: box.toggleKind("ol") }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "ul"; tip: box.app.tr("Bulleted list", "Lista com marcadores") + "  Ctrl+Shift+8"; onClicked: box.toggleKind("ul") }
+      Item { width: box.t.sp(4); height: 1 }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "q"; tip: box.app.tr("Quote", "Citação") + "  Ctrl+Shift+9"; onClicked: box.toggleKind("q") }
+      FmtButton { app: box.app; icon: "󰗀"; tone: fmtBar.tone; active: box.marks.c; dim: parent.inCode; tip: box.app.tr("Code", "Código") + "  Ctrl+Shift+C"; onClicked: box.toggleMark("c") }
+      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: parent.inCode; tip: box.app.tr("Code block", "Bloco de código") + "  Ctrl+Alt+Shift+C"; onClicked: box.toggleKind("pre") }
     }
 
     // Files waiting to go.
@@ -612,6 +626,9 @@ Rectangle {
         onInputMethodComposingChanged: if (!inputMethodComposing) box.flush()
         onContentSizeChanged: box.layoutDecos()
         onWidthChanged: Qt.callLater(box.layoutDecos)
+        onFontChanged: Qt.callLater(box.layoutDecos)
+        // An input method's unfinished word pushes what follows along.
+        onPreeditTextChanged: Qt.callLater(box.layoutDecos)
 
         // Quote bars and code block boxes, under the text.
         Repeater {
@@ -628,6 +645,30 @@ Rectangle {
             color: code ? box.t.codeBg : box.t.alpha(box.t.fg, 0.28)
             border.width: code ? 1 : 0
             border.color: box.t.codeBorder
+          }
+        }
+
+        // Animated emoji: the text only shows a GIF's first frame, so they
+        // play here, on the see-through picture that holds their place.
+        // Under the text (a selection still tints them), over the code
+        // boxes; only the ones in view play.
+        Repeater {
+          model: ScriptModel { values: box.gifs; objectProp: "key" }
+          delegate: AnimatedImage {
+            required property var modelData
+            readonly property Flickable view: scroll.contentItem as Flickable
+            readonly property bool inView: !view || (y + height > view.contentY && y < view.contentY + view.height)
+            z: -0.5
+            x: modelData.x
+            y: modelData.y
+            width: box.t.emojiPx
+            height: width
+            source: modelData.url
+            asynchronous: true
+            fillMode: Image.PreserveAspectFit
+            playing: visible && inView
+            smooth: true
+            mipmap: true
           }
         }
 
@@ -714,23 +755,24 @@ Rectangle {
       Row {
         x: box.t.sp(6)
         anchors.verticalCenter: parent.verticalCenter
-        spacing: box.t.sp(2)
+        spacing: box.t.sp(4)
         visible: !box.editing
         Rectangle {
           width: box.t.sp(28); height: width; radius: width / 2
           anchors.verticalCenter: parent.verticalCenter
-          color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.08)
-          Glyph { app: box.app; anchors.centerIn: parent; icon: "󰐕"; size: box.t.fsIcon; color: box.t.fgSoft }
+          color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.1)
+          Glyph { app: box.app; anchors.centerIn: parent; icon: ""; size: box.t.fsIcon + 3; color: plusMa.containsMouse ? box.t.fgBright : box.t.fgSoft }
           MouseArea { id: plusMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: box.pickFiles() }
           PanelToolTip { visible: plusMa.containsMouse; text: box.app.tr("Upload from your computer", "Enviar do seu computador") + "  Ctrl+U" }
         }
-        FmtButton { app: box.app; icon: "󰬴"; active: box.showFormatting; tip: box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação")
+        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; underlined: box.showFormatting
+                    tip: box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação")
                     onClicked: { box.showFormatting = !box.showFormatting; box.app.setSetting("composerToolbar", box.showFormatting) } }
-        FmtButton { id: emojiBtn; app: box.app; icon: "󰇵"; tip: box.app.tr("Emoji", "Emoji")
+        FmtButton { id: emojiBtn; app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Emoji", "Emoji")
                     onClicked: box.win.emojiPicker(emojiBtn, function(name) { box.insertEmoji(name); input.forceActiveFocus() }, {}) }
-        FmtButton { app: box.app; icon: "󰁥"; tip: box.app.tr("Mention someone", "Mencionar alguém"); onClicked: box.mention() }
-        Rectangle { width: 1; height: box.t.sp(18); color: box.t.line; anchors.verticalCenter: parent.verticalCenter }
-        FmtButton { app: box.app; icon: "󰿟"; tip: box.app.tr("Run a shortcut", "Executar um atalho")
+        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Mention someone", "Mencionar alguém"); onClicked: box.mention() }
+        Item { width: box.t.sp(8); height: 1 }
+        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.alpha(box.t.fgDim, 0.7); tip: box.app.tr("Run a shortcut", "Executar um atalho")
                     onClicked: { if (RD.isEmpty(box.doc)) box.change(RD.insertText(box.doc, 0, 0, "/", null).doc, 1); input.forceActiveFocus() } }
       }
 
@@ -744,37 +786,75 @@ Rectangle {
         SButton { app: box.app; small: true; text: box.app.tr("Cancel", "Cancelar"); onClicked: box.done() }
         SButton { app: box.app; small: true; kind: "primary"; text: box.app.tr("Save", "Salvar"); onClicked: box.submit() }
       }
-      // Send, and beside it Slack's "Schedule for later".
-      Row {
-        id: sendRow
+      // Send, and Slack's "Schedule for later" beside it: one pill split by
+      // a thin line, each half lighting up on its own.
+      Rectangle {
+        id: sendPill
         visible: !box.editing
         anchors.right: parent.right
         anchors.rightMargin: box.t.sp(8)
         anchors.verticalCenter: parent.verticalCenter
         readonly property bool can: box.hasText || box.files.length > 0
-        spacing: 1
+        readonly property int r: box.t.sp(5)
+        readonly property color lit: Qt.lighter(box.t.accent, 1.1)
+        width: sendHalf.width + (schedBtn.visible ? 1 + schedBtn.width : 0)
+        height: box.t.sp(28)
+        radius: r
+        color: can ? box.t.accent : "transparent"
         Rectangle {
-          width: box.t.sp(34)
-          height: box.t.sp(28)
-          radius: Math.max(4, box.t.radiusSmall)
-          color: sendRow.can ? (sendMa.containsMouse ? Qt.lighter(box.t.accent, 1.08) : box.t.accent) : "transparent"
-          Glyph { app: box.app; anchors.centerIn: parent; icon: "󰒊"; size: box.t.fsIcon; color: sendRow.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
-          MouseArea { id: sendMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendRow.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendRow.can) box.submit() }
-          PanelToolTip { visible: sendMa.containsMouse && sendRow.can; text: box.sendLabel + "  Enter" }
+          id: sendHalf
+          width: box.t.sp(36)
+          height: parent.height
+          topLeftRadius: sendPill.r
+          bottomLeftRadius: sendPill.r
+          topRightRadius: schedBtn.visible ? 0 : sendPill.r
+          bottomRightRadius: schedBtn.visible ? 0 : sendPill.r
+          color: sendPill.can && sendMa.containsMouse ? sendPill.lit : "transparent"
+          Glyph { app: box.app; anchors.centerIn: parent; icon: "󰒊"; size: box.t.fsIcon + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
+          MouseArea { id: sendMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendPill.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendPill.can) box.submit() }
+          PanelToolTip { visible: sendMa.containsMouse && sendPill.can; text: box.sendLabel + "  Enter" }
+        }
+        Rectangle {
+          visible: schedBtn.visible
+          x: sendHalf.width
+          anchors.verticalCenter: parent.verticalCenter
+          width: 1
+          height: Math.round(parent.height * 0.6)
+          color: sendPill.can ? box.t.alpha(box.t.onColor(box.t.accent), 0.3) : box.t.lineStrong
         }
         Rectangle {
           id: schedBtn
           visible: box.files.length === 0
-          width: box.t.sp(22)
-          height: box.t.sp(28)
-          radius: Math.max(4, box.t.radiusSmall)
-          color: sendRow.can ? (schedMa.containsMouse ? Qt.lighter(box.t.accent, 1.08) : box.t.accent) : "transparent"
-          Glyph { app: box.app; anchors.centerIn: parent; icon: "󰅀"; size: box.t.fsSmall; color: sendRow.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
-          MouseArea { id: schedMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendRow.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendRow.can) box.scheduleMenu() }
-          PanelToolTip { visible: schedMa.containsMouse && sendRow.can; text: box.app.tr("Schedule for later", "Agendar para depois") }
+          x: sendHalf.width + 1
+          width: box.t.sp(26)
+          height: parent.height
+          topRightRadius: sendPill.r
+          bottomRightRadius: sendPill.r
+          color: sendPill.can && schedMa.containsMouse ? sendPill.lit : "transparent"
+          Glyph { app: box.app; anchors.centerIn: parent; icon: ""; size: box.t.fsSmall + 1; color: sendPill.can ? box.t.onColor(box.t.accent) : box.t.fgDim }
+          MouseArea { id: schedMa; anchors.fill: parent; hoverEnabled: true; cursorShape: sendPill.can ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: if (sendPill.can) box.scheduleMenu() }
+          PanelToolTip { visible: schedMa.containsMouse && sendPill.can; text: box.app.tr("Schedule for later", "Agendar para depois") }
         }
       }
     }
+  }
+
+  // Under the box, on the right (the conversation's "typing…" line is on
+  // the left), Slack's reminder of the keys once something is typed. It
+  // sits in the space below the box, so the box keeps its height.
+  Text {
+    visible: box.hasText && !box.editing
+    anchors.right: parent.right
+    anchors.rightMargin: box.t.sp(2)
+    anchors.top: parent.bottom
+    anchors.topMargin: box.t.sp(4)
+    readonly property bool inCode: box.marks.k === "pre"
+    text: "<b><font color=\"" + box.t.hex(box.t.fgSoft) + "\">" + (inCode ? "Ctrl + Enter" : "Shift + Enter") + "</font></b> " +
+          (inCode ? box.app.tr("to send", "para enviar") : box.app.tr("to add a new line", "para nova linha"))
+    textFormat: Text.StyledText
+    color: box.t.fgDim
+    font.family: box.t.font
+    font.pixelSize: box.t.fsTiny
   }
 
   // ---------------------------------------------------------------- autocomplete

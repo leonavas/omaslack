@@ -17,7 +17,12 @@ FloatingWindow {
   property var app: Reg.service
   readonly property var t: app.theme
   readonly property var ws: app.current
-  property string railTab: "home"   // home | dms | activity | later
+  property string railTab: "home"   // home | dms | activity | files | later
+  // Activity, as Slack's: the list fills the panel until an entry opens
+  // beside it (`activityKey` the one open). Back on the tab, the whole list.
+  property bool activityOpen: false
+  property string activityKey: ""
+  onRailTabChanged: { appWin.activityOpen = false; appWin.closePeek() }
   readonly property bool menusShown: menus.shown
   readonly property Item rootItem: root
   readonly property string dialogName: dialogs.name
@@ -57,6 +62,39 @@ FloatingWindow {
   function toast(text) { toastBox.show(text) }
   function focusComposer() { if (content.item && content.item.focusComposer) content.item.focusComposer() }
 
+  // Hovering DMs, Activity, Files or Later on the rail peeks at that list
+  // in a card beside it, as Slack does; a click in it goes to the tab (in
+  // Files, opens the file). Not for the tab you're on, nor over a menu or
+  // dialog.
+  property string peekTab: ""
+  property string peekWant: ""
+  property Item peekFrom: null
+  function peekHover(tab, item, on) {
+    if (on) {
+      if (tab === appWin.railTab || menus.shown || dialogs.name !== "") return
+      appWin.peekWant = tab
+      appWin.peekFrom = item
+      peekHide.stop()
+      if (appWin.peekTab) peekShow.triggered()
+      else peekShow.restart()
+    } else {
+      if (appWin.peekWant === tab) appWin.peekWant = ""
+      peekShow.stop()
+      peekHide.restart()
+    }
+  }
+  function closePeek() { peekShow.stop(); appWin.peekWant = ""; appWin.peekTab = "" }
+  Timer {
+    id: peekShow
+    interval: 200
+    onTriggered: if (appWin.peekWant && appWin.peekWant !== appWin.railTab) appWin.peekTab = appWin.peekWant
+  }
+  Timer {
+    id: peekHide
+    interval: 250
+    onTriggered: if (!appWin.peekWant && !peekMouse.hovered) appWin.peekTab = ""
+  }
+
   Connections {
     target: appWin.app
     function onDialogRequested(name, args) { appWin.dialog(name, args) }
@@ -66,6 +104,9 @@ FloatingWindow {
     target: appWin.ws
     ignoreUnknownSignals: true
     function onToastSerialChanged() { if (appWin.ws.toast) toastBox.show(appWin.ws.toast) }
+    // A conversation opened from elsewhere (search, a link) while the whole
+    // Activity list shows: beside it, not behind it.
+    function onCurrentChanged() { if (appWin.railTab === "activity") appWin.activityOpen = true }
   }
 
   Item {
@@ -128,18 +169,25 @@ FloatingWindow {
         anchors.fill: parent
         visible: appWin.app.signedIn && appWin.ws !== null
 
+        // Activity: all of it, or a wide list with the message beside it.
+        // Files: always all of it (a file opens outside the panel).
+        readonly property bool activityFull: appWin.railTab === "activity" && !appWin.activityOpen
+        readonly property bool fullPage: activityFull || appWin.railTab === "files"
         Loader {
           id: sidebarLoader
           x: 0
           y: 0
-          width: sidebarWidth.value
+          width: parent.fullPage ? parent.width
+               : (appWin.railTab === "activity" ? Math.round(Math.max(appWin.t.sp(340), Math.min(parent.width * 0.42, appWin.t.sp(640)))) : sidebarWidth.value)
           height: parent.height
-          sourceComponent: appWin.railTab === "dms" ? dmsC : (appWin.railTab === "activity" ? activityC : (appWin.railTab === "later" ? laterC : sidebarC))
+          sourceComponent: appWin.railTab === "dms" ? dmsC : (appWin.railTab === "activity" ? activityC : (appWin.railTab === "later" ? laterC
+                         : (appWin.railTab === "files" ? filesC : sidebarC)))
         }
         Component { id: sidebarC; Sidebar { app: appWin.app; win: appWin; ws: appWin.ws; narrow: sidebarWidth.value < appWin.t.sp(140) } }
         Component { id: dmsC; DmsList { app: appWin.app; win: appWin; ws: appWin.ws } }
         Component { id: activityC; ActivityList { app: appWin.app; win: appWin; ws: appWin.ws } }
         Component { id: laterC; LaterList { app: appWin.app; win: appWin; ws: appWin.ws } }
+        Component { id: filesC; FilesList { app: appWin.app; win: appWin; ws: appWin.ws } }
 
         QtObject {
           id: sidebarWidth
@@ -150,6 +198,7 @@ FloatingWindow {
         // into a rail of photos.
         Rectangle {
           id: grip
+          visible: appWin.railTab !== "activity" && appWin.railTab !== "files"
           x: sidebarLoader.width - 2
           width: 5
           height: parent.height
@@ -175,11 +224,12 @@ FloatingWindow {
           }
         }
 
-        Rectangle { x: sidebarLoader.width; width: 1; height: parent.height; color: appWin.t.line }
+        Rectangle { visible: main.visible; x: sidebarLoader.width; width: 1; height: parent.height; color: appWin.t.line }
 
         // The conversation (or Threads / Drafts) and the side pane.
         Item {
           id: main
+          visible: !parent.fullPage
           x: sidebarLoader.width + 1
           width: parent.width - x
           height: parent.height
@@ -209,6 +259,35 @@ FloatingWindow {
           Component { id: profileC; ProfilePane { app: appWin.app; win: appWin; ws: appWin.ws } }
         }
       }
+    }
+
+    // ------------------------------------------------------------ rail peek
+    Clip {
+      id: peekCard
+      visible: appWin.peekTab !== "" && appWin.app.signedIn && !!appWin.ws
+      z: 600
+      readonly property real fromY: appWin.peekFrom ? appWin.peekFrom.mapToItem(root, 0, 0).y : topBar.height
+      x: rail.width - appWin.t.sp(4)
+      width: appWin.t.sp(340)
+      height: Math.min(appWin.t.sp(540), root.height - topBar.height - appWin.t.sp(16))
+      y: Math.max(topBar.height + appWin.t.sp(6), Math.min(fromY - appWin.t.sp(8), root.height - height - appWin.t.sp(8)))
+      radius: Math.max(8, appWin.t.radiusCard)
+      color: appWin.t.sidebar
+      borderWidth: 1
+      borderColor: appWin.t.lineStrong
+      HoverHandler {
+        id: peekMouse
+        onHoveredChanged: if (!hovered) peekHide.restart()
+      }
+      Loader {
+        anchors.fill: parent
+        active: peekCard.visible
+        sourceComponent: appWin.peekTab === "dms" ? peekDmsC : (appWin.peekTab === "activity" ? peekActivityC : (appWin.peekTab === "files" ? peekFilesC : peekLaterC))
+      }
+      Component { id: peekDmsC; DmsList { app: appWin.app; win: appWin; ws: appWin.ws; peek: true } }
+      Component { id: peekActivityC; ActivityList { app: appWin.app; win: appWin; ws: appWin.ws; peek: true } }
+      Component { id: peekLaterC; LaterList { app: appWin.app; win: appWin; ws: appWin.ws; peek: true } }
+      Component { id: peekFilesC; FilesList { app: appWin.app; win: appWin; ws: appWin.ws; peek: true } }
     }
 
     // ------------------------------------------------------------ overlays
