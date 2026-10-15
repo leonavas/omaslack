@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import "../lib/Util.js" as U
 
 // "Edit your profile": full name, display name, title and the photo (picked
 // with the system's file chooser, or dropped on it). Saving uploads the
@@ -22,11 +23,10 @@ DialogFrame {
     titleField.text = d.u.title || ""
   }
 
-  // The system's file chooser (zenity), images only.
+  // The desktop's file chooser (Omarchy's, else zenity: U.filePicker), images only.
   Process {
     id: chooser
-    command: ["sh", "-c", 'command -v zenity >/dev/null 2>&1 || exit 127; exec zenity --file-selection --title="$1" --file-filter="$2 | *.png *.jpg *.jpeg *.gif *.PNG *.JPG *.JPEG *.GIF"',
-              "pick", d.app.tr("Choose a profile photo", "Escolha uma foto de perfil"), d.app.tr("Images", "Imagens")]
+    command: U.filePicker(d.app.tr("Choose a profile photo", "Escolha uma foto de perfil"), false, "png jpg jpeg gif", d.app.tr("Images", "Imagens"))
     stdout: StdioCollector {
       onStreamFinished: {
         var p = String(text).trim()
@@ -34,8 +34,8 @@ DialogFrame {
       }
     }
     onExited: (code, status) => {
-      if (code === 127) d.error = d.app.tr("The file chooser needs zenity (pacman -S zenity). You can also drop a picture on the photo.",
-                                           "O seletor de arquivos precisa do zenity (pacman -S zenity). Você também pode soltar uma imagem sobre a foto.")
+      var why = U.filePickerError(code, d.app.lang)
+      if (why) d.error = why + " " + d.app.tr("You can also drop a picture on the photo.", "Você também pode soltar uma imagem sobre a foto.")
     }
   }
   function choose() { if (!chooser.running) chooser.running = true }
@@ -121,6 +121,7 @@ DialogFrame {
           width: parent.width
           wrapMode: Text.Wrap
           text: d.app.tr("Let people know what you do at ", "Deixe as pessoas verem o que você faz em ") + (d.ws ? d.ws.team.name || "" : "") + "."
+          textFormat: Text.PlainText
           color: d.t.fgDim
           font.family: d.t.font
           font.pixelSize: d.t.fsSmall
@@ -133,6 +134,7 @@ DialogFrame {
           width: parent.width
           wrapMode: Text.Wrap
           text: d.u ? (d.u.tzLabel || "") + (d.u.tzOffset !== undefined ? "  (UTC" + (d.u.tzOffset >= 0 ? "+" : "−") + Math.floor(Math.abs(d.u.tzOffset) / 3600) + (Math.abs(d.u.tzOffset) % 3600 ? ":" + String(Math.floor(Math.abs(d.u.tzOffset) % 3600 / 60)).padStart(2, "0") : "") + ")" : "") : ""
+          textFormat: Text.PlainText
           color: d.t.fgSoft
           font.family: d.t.font
           font.pixelSize: d.t.fsText - 1
@@ -189,6 +191,7 @@ DialogFrame {
           width: parent.width
           elide: Text.ElideMiddle
           text: d.photo.split("/").pop()
+          textFormat: Text.PlainText
           color: d.t.fgSoft
           font.family: d.t.font
           font.pixelSize: d.t.fsSmall
@@ -222,6 +225,7 @@ DialogFrame {
       width: parent.width
       wrapMode: Text.Wrap
       text: d.error
+      textFormat: Text.PlainText
       color: d.t.red
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall

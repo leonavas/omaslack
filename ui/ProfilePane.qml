@@ -203,6 +203,7 @@ Rectangle {
           id: nameText
           width: Math.min(implicitWidth, nameRow.width - nameRow.extras)
           text: pp.u ? pp.shownName : (pp.loading ? pp.app.tr("Loading…", "Carregando…") : "")
+          textFormat: Text.PlainText
           color: pp.t.fgBright
           font.family: pp.t.font
           font.pixelSize: pp.t.fsHuge
@@ -235,6 +236,7 @@ Rectangle {
         visible: !!pp.u && !!pp.u.real && pp.u.real !== pp.u.name && !pp.isApp
         width: parent.width
         text: pp.u ? (pp.u.real || "") : ""
+        textFormat: Text.PlainText
         color: pp.t.fgDim
         font.family: pp.t.font
         font.pixelSize: pp.t.fsText
@@ -245,6 +247,7 @@ Rectangle {
         visible: !!pp.u && !!pp.u.title
         width: parent.width
         text: pp.u ? (pp.u.title || "") : ""
+        textFormat: Text.PlainText
         color: pp.t.fg
         font.family: pp.t.font
         font.pixelSize: pp.t.fsText + 1
@@ -256,6 +259,7 @@ Rectangle {
         visible: pp.isApp && !!pp.appInfo && !!pp.appInfo.desc
         width: parent.width
         text: pp.appInfo ? (pp.appInfo.desc || "") : ""
+        textFormat: Text.PlainText
         color: pp.t.fg
         font.family: pp.t.font
         font.pixelSize: pp.t.fsText
@@ -322,7 +326,7 @@ Rectangle {
           width: parent.width - pp.t.sp(28)
           text: {
             if (!pp.status) return ""
-            var s = pp.status.text
+            var s = U.escapeHtml(pp.status.text)
             if (pp.status.exp) s += (s ? "  ·  " : "") + "<font color=\"" + pp.t.hex(pp.t.fgDim) + "\">" + U.untilLabel(pp.status.exp, pp.app.lang, pp.app.clock24) + "</font>"
             return s
           }
@@ -509,6 +513,7 @@ Rectangle {
       Text {
         visible: ab.text !== ""
         text: ab.text
+        textFormat: Text.PlainText
         color: ab.t.fgBright
         font.family: ab.t.font
         font.pixelSize: ab.t.fsSmall + 1
@@ -546,10 +551,11 @@ Rectangle {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       spacing: 1
-      Text { text: cr.label; color: cr.t.fgDim; font.family: cr.t.font; font.pixelSize: cr.t.fsSmall; font.bold: true }
+      Text { text: cr.label; textFormat: Text.PlainText; color: cr.t.fgDim; font.family: cr.t.font; font.pixelSize: cr.t.fsSmall; font.bold: true }
       Text {
         width: parent.width
         text: cr.value
+        textFormat: Text.PlainText
         color: cr.link ? cr.t.link : cr.t.fg
         font.family: cr.t.font
         font.pixelSize: cr.t.fsText

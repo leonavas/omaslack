@@ -28,6 +28,7 @@ Item {
     Text {
       visible: tab.label !== ""
       text: tab.label
+      textFormat: Text.PlainText
       color: tab.active ? tab.t.fgBright : tab.t.fgDim
       font.family: tab.t.font
       font.pixelSize: tab.t.fsSmall + 1

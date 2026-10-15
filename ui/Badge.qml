@@ -19,6 +19,7 @@ Rectangle {
     id: label
     anchors.centerIn: parent
     text: b.text
+    textFormat: Text.PlainText
     color: b.ink
     font.family: b.t.font
     font.pixelSize: b.t.fsTiny

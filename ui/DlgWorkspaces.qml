@@ -145,6 +145,7 @@ Item {
                 Text {
                   width: parent.width
                   text: r.w.team.name || r.w.team.domain || r.w.teamId
+                  textFormat: Text.PlainText
                   color: r.ink
                   font.family: d.t.font
                   font.pixelSize: d.t.fsText - 1
@@ -155,6 +156,7 @@ Item {
                   width: parent.width
                   visible: text !== ""
                   text: r.w.team.domain ? r.w.team.domain + ".slack.com" : ""
+                  textFormat: Text.PlainText
                   color: r.hot ? d.t.alpha(r.ink, 0.8) : d.t.fgDim
                   font.family: d.t.font
                   font.pixelSize: d.t.fsTiny

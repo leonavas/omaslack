@@ -118,6 +118,7 @@ Rectangle {
     text: ac.kind === "emoji" ? ac.app.tr("Emoji matching ", "Emoji com ") + ":" + ac.text.slice(ac.start + 1, ac.input.cursorPosition)
         : ac.kind === "user" ? ac.app.tr("People", "Pessoas")
         : ac.kind === "channel" ? ac.app.tr("Channels", "Canais") : ac.app.tr("Shortcuts", "Atalhos")
+    textFormat: Text.PlainText
     color: ac.t.fgDim
     font.family: ac.t.font
     font.pixelSize: ac.t.fsSmall
@@ -153,6 +154,7 @@ Rectangle {
         }
         Text {
           text: ac.kind === "emoji" ? ":" + modelData.name + ":" : (ac.kind === "channel" ? modelData.name : (modelData.name || ""))
+          textFormat: Text.PlainText
           color: parent.parent.ink
           font.family: ac.t.font
           font.pixelSize: ac.t.fsText - 1
@@ -161,6 +163,7 @@ Rectangle {
         }
         Text {
           text: ac.kind === "command" ? ((modelData.usage ? modelData.usage + "  " : "") + (modelData.desc || "")) : (modelData.detail || "")
+          textFormat: Text.PlainText
           color: index === ac.sel ? parent.parent.ink : ac.t.fgDim
           font.family: ac.t.font
           font.pixelSize: ac.t.fsSmall

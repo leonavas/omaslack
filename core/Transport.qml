@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "../lib/Util.js" as U
 
 // The wire to Slack for one workspace: lib/transport.py, spoken to in JSON
 // lines. Calls come back to their callback; the socket's frames arrive as
@@ -45,12 +46,17 @@ Item {
   // Web API: cb({ok, status, body, error}).
   function call(method, params, cb) { return _request({ op: "call", method: method, params: params || {} }, cb) }
   // `reuse`: a file already at `dest` is kept (and marked as just used).
-  function download(url, dest, cb, htmlOk, reuse) { return _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse }, cb) }
+  // `noClobber`: one already there stays; this one gets "name (1).ext"…
+  function download(url, dest, cb, htmlOk, reuse, noClobber) {
+    return _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse, no_clobber: !!noClobber }, cb)
+  }
   function postFile(url, path, cb) { return _request({ op: "post_file", url: url, path: path }, cb) }
   function multipart(method, fields, path, field, mime, cb) {
     return _request({ op: "multipart", method: method, fields: fields || {}, path: path || "", field: field || "file", mime: mime || "" }, cb)
   }
   function readCookie(db, cb) { return _request({ op: "read_cookie", db: db }, cb) }
+  // A file of the config dir, 0600 from the start and replaced in one step.
+  function writePrivate(name, text, cb) { return _request({ op: "write_private", name: name, text: text }, cb) }
   function openSocket(url) { _write({ op: "ws_open", url: url }) }
   function sendSocket(data) { if (root.socketOpen) _write({ op: "ws_send", data: data }) }
   function closeSocket() { _write({ op: "ws_close" }) }
@@ -75,6 +81,8 @@ Item {
   Process {
     id: proc
     command: ["python3", "-u", "-I", root.script]
+    // The user agent it sends (lib/Util.js chromeUa).
+    environment: ({ OMASLACK_UA: U.chromeUa() })
     running: root.enabled
     stdinEnabled: true
     stdout: SplitParser { onRead: data => root._line(data) }

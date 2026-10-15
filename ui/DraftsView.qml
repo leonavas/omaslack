@@ -200,6 +200,7 @@ Rectangle {
             Text {
               id: title
               text: (row.c && (row.c.kind === "channel" || row.c.kind === "private") ? "#" : "") + (dv.ws.convLabel(row.modelData.conv) || row.modelData.conv)
+              textFormat: Text.PlainText
               color: dv.t.fgBright
               font.family: dv.t.font
               font.pixelSize: dv.t.fsText

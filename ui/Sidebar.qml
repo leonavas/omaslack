@@ -39,6 +39,7 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(implicitWidth, parent.width - side.t.sp(30))
         text: side.ws ? side.ws.team.name : ""
+        textFormat: Text.PlainText
         color: side.t.fgBright
         font.family: side.t.font
         font.pixelSize: side.t.fsHeader
@@ -177,6 +178,7 @@ Rectangle {
       width: Math.min(implicitWidth, parent.width - side.t.sp(16))
       elide: Text.ElideRight
       text: side.dragRow ? (side.dragRow.kind === "section" ? side.dragRow.label : (side.dragRow.convKind === "channel" ? "# " : "") + side.dragRow.label) : ""
+      textFormat: Text.PlainText
       color: side.t.selectedText
       font.family: side.t.font
       font.pixelSize: side.t.fsSidebar
@@ -259,7 +261,7 @@ Rectangle {
       { separator: true },
       { label: side.app.tr("Sign out of ", "Sair de ") + w.team.name, icon: "󰍃", danger: true, action: function() { side.win.dialog("confirm", {
         title: side.app.tr("Sign out of ", "Sair de ") + w.team.name + "?",
-        text: side.app.tr("This app forgets the session. Slack in your browser stays signed in.", "Este app esquece a sessão. O Slack no navegador continua conectado."),
+        text: side.app.tr("This app forgets the session, with this workspace's drafts and cached files. Slack in your browser stays signed in.", "Este app esquece a sessão, com os rascunhos e arquivos em cache deste workspace. O Slack no navegador continua conectado."),
         confirm: side.app.tr("Sign out", "Sair"), danger: true, action: function() { side.app.signOut(w.teamId) } }) } }
     ], 0, teamBtn.height + side.t.sp(4))
   }

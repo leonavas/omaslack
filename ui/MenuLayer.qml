@@ -124,6 +124,7 @@ Item {
               id: headC
               Text {
                 text: row.modelData.header
+                textFormat: Text.PlainText
                 color: menuLayer.t.fgDim
                 font.family: menuLayer.t.font
                 font.pixelSize: menuLayer.t.fsSmall
@@ -139,6 +140,7 @@ Item {
               id: titleC
               Text {
                 text: row.modelData.title
+                textFormat: Text.PlainText
                 color: menuLayer.t.fgBright
                 font.family: menuLayer.t.font
                 font.pixelSize: menuLayer.t.fsText
@@ -197,6 +199,7 @@ Item {
                   }
                   Text {
                     text: parent.parent.it.label
+                    textFormat: Text.PlainText
                     color: parent.parent.ink
                     font.family: menuLayer.t.font
                     font.pixelSize: menuLayer.t.fsText - 1
@@ -208,6 +211,7 @@ Item {
                   anchors.rightMargin: menuLayer.t.sp(10)
                   anchors.verticalCenter: parent.verticalCenter
                   text: parent.it.sub ? "›" : (parent.it.hint || "")
+                  textFormat: Text.PlainText
                   color: parent.hot && parent.on ? parent.ink : menuLayer.t.fgDim
                   font.family: menuLayer.t.font
                   font.pixelSize: parent.it.sub ? menuLayer.t.fsTitle : menuLayer.t.fsSmall

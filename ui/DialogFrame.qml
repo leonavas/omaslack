@@ -54,8 +54,8 @@ Item {
         id: titleCol
         width: parent.width - d.t.sp(40)
         spacing: d.t.sp(4)
-        Text { text: d.title; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsHuge - 2; font.bold: true; width: parent.width; elide: Text.ElideRight }
-        Text { visible: d.subtitle !== ""; text: d.subtitle; color: d.t.fgDim; font.family: d.t.font; font.pixelSize: d.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
+        Text { text: d.title; textFormat: Text.PlainText; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsHuge - 2; font.bold: true; width: parent.width; elide: Text.ElideRight }
+        Text { visible: d.subtitle !== ""; text: d.subtitle; textFormat: Text.PlainText; color: d.t.fgDim; font.family: d.t.font; font.pixelSize: d.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
       }
       IconButton {
         app: d.app

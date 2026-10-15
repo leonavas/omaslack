@@ -249,8 +249,8 @@ Item {
       }
     }
 
-    // A newer version: a small green button over your photo, like slick's by
-    // your name (core/Updater.qml): opens the update in a terminal; faded
+    // A newer version: a small green button over your photo
+    // (core/Updater.qml): opens the update in a terminal; faded
     // while that's open, "reload" once it's on disk but not loaded. Your
     // menu has it too.
     Rectangle {
@@ -270,6 +270,7 @@ Item {
         elide: Text.ElideRight
         text: !upPill.up ? "" : upPill.busy ? rail.app.tr("updating…", "atualizando…")
               : upPill.up.phase === "updated" ? rail.app.tr("↻ reload", "↻ recarregar") : "↑ " + upPill.up.latest
+        textFormat: Text.PlainText
         color: upPill.busy ? rail.t.fgDim : rail.t.onColor(rail.t.green)
         font.family: rail.t.font
         font.pixelSize: rail.t.fsTiny
@@ -383,7 +384,7 @@ Item {
     items.push({ separator: true })
     items.push({ label: rail.app.tr("Sign out of ", "Sair de ") + w.team.name, icon: "󰍃", danger: true, action: function() { rail.win.dialog("confirm", {
       title: rail.app.tr("Sign out of ", "Sair de ") + w.team.name + "?",
-      text: rail.app.tr("This app forgets the session. Slack in your browser stays signed in.", "Este app esquece a sessão. O Slack no navegador continua conectado."),
+      text: rail.app.tr("This app forgets the session, with this workspace's drafts and cached files. Slack in your browser stays signed in.", "Este app esquece a sessão, com os rascunhos e arquivos em cache deste workspace. O Slack no navegador continua conectado."),
       confirm: rail.app.tr("Sign out", "Sair"), danger: true,
       action: function() { rail.app.signOut(w.teamId) } }) } })
     rail.win.menuAt(item, items, item.width + rail.t.sp(10), 0)

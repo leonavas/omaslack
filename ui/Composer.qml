@@ -489,14 +489,19 @@ Rectangle {
   }
 
   // ---------------------------------------------------------------- files
+  // The desktop's file chooser (Omarchy's, else zenity: U.filePicker).
   Process {
     id: picker
-    command: ["zenity", "--file-selection", "--multiple", "--separator=\n", "--title=" + box.app.tr("Upload files", "Enviar arquivos")]
+    command: U.filePicker(box.app.tr("Upload files", "Enviar arquivos"), true)
     stdout: StdioCollector {
       onStreamFinished: {
-        String(text).split("\n").filter(function(p) { return p.trim() }).forEach(function(p) { box.addFile(p.trim()) })
+        box.addFile(String(text).split("\n").map(function(p) { return p.trim() }).filter(function(p) { return p }))
         input.forceActiveFocus()
       }
+    }
+    onExited: code => {
+      var why = U.filePickerError(code, box.app.lang)
+      if (why && box.win) box.win.toast(why)
     }
   }
   function pickFiles() { if (!picker.running) picker.running = true }
@@ -504,21 +509,36 @@ Rectangle {
   Process {
     id: statProc
     property var queue: []
+    property bool busy: false
     stdout: StdioCollector {
       onStreamFinished: {
-        var parts = String(text).trim().split("\t")
-        var size = parseInt(parts[0], 10) || 0
-        var path = parts.slice(1).join("\t")
-        if (!path) return
         var list = box.files.slice()
-        var name = path.split("/").pop()
-        list.push({ path: path, name: name, size: size, mime: U.guessMime(path), preview: /\.(png|jpe?g|gif|webp)$/i.test(path) ? "file://" + path : "" })
+        String(text).split("\n").forEach(function(line) {
+          var parts = line.split("\t")
+          var size = parseInt(parts[0], 10) || 0
+          var path = parts.slice(1).join("\t")
+          if (!path || list.some(function(f) { return f.path === path })) return
+          var name = path.split("/").pop()
+          list.push({ path: path, name: name, size: size, mime: U.guessMime(path), preview: /\.(png|jpe?g|gif|webp)$/i.test(path) ? "file://" + path : "" })
+        })
         box.files = list.slice(0, 10)
+        statProc.busy = false
+        Qt.callLater(box.statNext)
       }
     }
   }
-  function addFile(path) {
-    statProc.command = ["sh", "-c", 'printf "%s\\t%s" "$(stat -c %s "$1")" "$1"', "stat", path]
+  // One path or a list; one stat call covers every queued path, and paths
+  // that arrive while it runs wait for the next.
+  function addFile(paths) {
+    statProc.queue = statProc.queue.concat(paths)
+    box.statNext()
+  }
+  function statNext() {
+    if (statProc.busy || !statProc.queue.length) return
+    var paths = statProc.queue
+    statProc.queue = []
+    statProc.busy = true
+    statProc.command = ["sh", "-c", 'for p; do printf "%s\\t%s\\n" "$(stat -c %s "$p")" "$p"; done', "stat"].concat(paths)
     statProc.running = true
   }
 
@@ -601,7 +621,7 @@ Rectangle {
             anchors.centerIn: parent
             spacing: box.t.sp(8)
             Glyph { app: box.app; icon: "󰈔"; size: box.t.fsTitle + 4; color: box.t.blue; anchors.verticalCenter: parent.verticalCenter }
-            Text { id: fname; text: parent.parent.modelData.name; color: box.t.fg; font.family: box.t.font; font.pixelSize: box.t.fsSmall; width: Math.min(implicitWidth, box.t.sp(170)); elide: Text.ElideMiddle; anchors.verticalCenter: parent.verticalCenter }
+            Text { id: fname; text: parent.parent.modelData.name; textFormat: Text.PlainText; color: box.t.fg; font.family: box.t.font; font.pixelSize: box.t.fsSmall; width: Math.min(implicitWidth, box.t.sp(170)); elide: Text.ElideMiddle; anchors.verticalCenter: parent.verticalCenter }
           }
           Rectangle {
             anchors.right: parent.right
@@ -766,6 +786,7 @@ Rectangle {
           id: alsoText
           anchors.verticalCenter: parent.verticalCenter
           text: box.app.tr("Also send to ", "Também enviar para ") + (box.c && box.c.kind !== "im" && box.c.kind !== "mpim" ? "#" + box.c.name : box.app.tr("the conversation", "a conversa"))
+          textFormat: Text.PlainText
           color: box.t.fgSoft
           font.family: box.t.font
           font.pixelSize: box.t.fsSmall

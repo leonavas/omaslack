@@ -35,6 +35,7 @@ Item {
       anchors.centerIn: parent
       visible: wi.initialsUp
       text: U.initials(wi.w ? (wi.w.team.name || "?") : "?")
+      textFormat: Text.PlainText
       color: "white"
       font.family: wi.t.font
       font.pixelSize: Math.max(8, Math.round(wi.size * 0.42))

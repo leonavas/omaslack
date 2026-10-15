@@ -77,6 +77,7 @@ Item {
           }
           Text {
             text: cv.c ? cv.ws.convLabel(cv.convId).replace(/ \((you|você)\)$/, "") : ""
+            textFormat: Text.PlainText
             color: cv.t.fgBright
             font.family: cv.t.font
             font.pixelSize: cv.t.fsHeader
@@ -188,6 +189,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(implicitWidth, parent.width * 0.45)
         text: cv.c && cv.c.topic ? cv.c.topic.replace(/<[^|>]*\|([^>]*)>/g, "$1").replace(/<([^>]*)>/g, "$1").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ") : ""
+        textFormat: Text.PlainText
         color: cv.t.fgDim
         font.family: cv.t.font
         font.pixelSize: cv.t.fsSmall
@@ -245,6 +247,7 @@ Item {
       width: parent.width - cv.t.sp(44)
       bottomPadding: cv.t.sp(6)
       text: "󰂛  " + (cv.other ? cv.other.name : "") + cv.app.tr(" has paused their notifications.", " pausou as próprias notificações.")
+      textFormat: Text.PlainText
       color: cv.t.fgDim
       font.family: cv.t.font
       font.pixelSize: cv.t.fsSmall
@@ -283,6 +286,7 @@ Item {
         TypingDots { app: cv.app; color: cv.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
         Text {
           text: Model.typingText(parent.names, cv.app.lang)
+          textFormat: Text.PlainText
           color: cv.t.fgDim
           font.family: cv.t.font
           font.pixelSize: cv.t.fsTiny + 1

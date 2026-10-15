@@ -2,9 +2,11 @@
 
 # Omaslack's update screen, shown the way Omarchy shows its own update
 # (omarchy-update): the floating terminal with Omarchy's logo, a box with
-# both versions and the exact command, a gum confirm, the command with its
-# output in view, a line saying how it went, and a key to close. A no closes
-# it: 130, which Omarchy's wrapper takes as nothing to wait on.
+# both versions and the exact command, the command with its output in view
+# (`omarchy plugin update` shows the changes and asks itself; a pull of your
+# own checkout is asked here, with gum's confirm), a line saying how it
+# went, and a key to close. A no closes it: 130, which Omarchy's wrapper
+# takes as nothing to wait on.
 # core/Updater.qml calls `open`, which opens the terminal and `run`s in it.
 #
 #   update.sh open|run --mode=omarchy|checkout --id=<plugin id> --folder=<dir>
@@ -74,11 +76,29 @@ confirm() {
   return 1
 }
 
+# Omarchy's update asks only on a terminal (stdin and stdout both), so its
+# output is kept through script(1)'s terminal rather than a pipe; the log
+# without script's own lines, the colors and the carriage returns.
+in_tty() {
+  local rc
+  if ! have script; then
+    : >"$base.log"
+    "$@"
+    return
+  fi
+  SHELL=$BASH script -qec "$(printf '%q ' "$@")" "$base.tty"
+  rc=$?
+  LC_ALL=C sed -e 's/\x1b\][^\x07]*\x07//g' -e 's/\x1b\[[0-?]*[ -\/]*[@-~]//g' -e 's/\r//g' \
+    -e '/^Script \(started\|done\) on /d' -- "$base.tty" >"$base.log" 2>/dev/null
+  rm -f -- "$base.tty"
+  return "$rc"
+}
+
 # The exit code for whoever picks it up, and Omarchy's key to close when
 # its wrapper isn't there to ask.
 finish() {
   trap - HUP INT TERM
-  [ -n "$dry" ] || echo "$1" >"$base.rc"
+  [ -n "$dry" ] || { rm -f -- "$base.tty"; echo "$1" >"$base.rc"; }
   if [ -n "$standalone" ] && [ "$1" -ne 130 ]; then
     if have omarchy-show-done; then
       omarchy-show-done
@@ -92,9 +112,9 @@ finish() {
 }
 
 run_update() {
-  local cmd shown before after rc now
+  local cmd shown before after rc now declined=""
   case $mode in
-  omarchy) cmd=(omarchy plugin update "$id" --yes) ;;
+  omarchy) cmd=(omarchy plugin update "$id") ;;
   checkout) cmd=(git -C "$folder" pull --ff-only) ;;
   *)
     red "update.sh: unknown install mode '$mode'"
@@ -121,8 +141,10 @@ run_update() {
     "$(t "Command:" "Comando:")"
     "$shown"
     ""
-    "$(t "What's new" "Novidades"): $repo/commits/main"
+    "$(t "What's new" "Novidades"): $repo/releases"
   )
+  [ "$mode" != omarchy ] ||
+    lines=("${lines[@]:0:5}" "• $(t "Omarchy shows the changes, then asks to confirm" "O Omarchy mostra as mudanças e depois pede para confirmar")" "${lines[@]:5}")
   if have gum; then
     gum style --border normal --padding "1 2" "${lines[@]}"
   else
@@ -130,7 +152,9 @@ run_update() {
   fi
   echo
 
-  if ! confirm "$(t "Continue with update?" "Continuar com a atualização?")"; then
+  # Omarchy's update asks itself (the same prompt as for any plugin); only
+  # a pull of your own checkout is asked here.
+  if [ "$mode" = checkout ] && ! confirm "$(t "Continue with update?" "Continuar com a atualização?")"; then
     t "Update cancelled" "Atualização cancelada"
     echo
     finish 130
@@ -143,11 +167,28 @@ run_update() {
     t "Dry run: nothing was run." "Simulação: nada foi rodado."
     echo
     rc=0
+  elif [ "$mode" = omarchy ]; then
+    in_tty "${cmd[@]}"
+    rc=$?
   else
     "${cmd[@]}" 2>&1 | tee -- "$base.log"
     rc=${PIPESTATUS[0]}
   fi
   after=$(git -C "$folder" rev-parse HEAD 2>/dev/null)
+
+  # A no at Omarchy's prompt: it says "Skipped" and ends well, with what it
+  # fetched still ahead of this copy; or Ctrl+C in it.
+  if [ "$mode" = omarchy ] && [ -z "$dry" ]; then
+    [ "$rc" -ne 130 ] || declined=1
+    [ "$rc" -ne 0 ] || [ "$before" != "$after" ] ||
+      [ "$(git -C "$folder" rev-parse -q --verify FETCH_HEAD 2>/dev/null)" = "$after" ] || declined=1
+  fi
+  if [ -n "$declined" ]; then
+    echo
+    t "Update cancelled" "Atualização cancelada"
+    echo
+    finish 130
+  fi
 
   # Once it pulled something, the whole shell restarts, as omarchy-update
   # ends: a rescan of the plugins (what `omarchy plugin update` does) keeps
@@ -186,7 +227,8 @@ main() {
   mode="" id="" folder="" from="" to="" note="{}" dry="" standalone=""
   lang=en
   repo=https://github.com/leonavas/omaslack
-  base=${XDG_RUNTIME_DIR:-/tmp}/omaslack-update
+  # The session's runtime folder, else a private one in the cache.
+  base=${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/omaslack}/omaslack-update
   local arg opts=()
   for arg in "$@"; do
     case $arg in
@@ -210,6 +252,7 @@ main() {
     [ "$arg" = --standalone ] || opts+=("$arg")
   done
   command -v omarchy >/dev/null 2>&1 || PATH=$PATH:${OMARCHY_PATH:-/usr/share/omarchy}/bin
+  [ -n "$dry" ] || mkdir -p -m 700 -- "${base%/*}" 2>/dev/null
 
   case $action in
   open) open_terminal "${opts[@]}" ;;

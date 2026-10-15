@@ -30,14 +30,15 @@ Column {
     Column {
       anchors.verticalCenter: parent.verticalCenter
       spacing: intro.t.sp(4)
-      Text { text: intro.other ? intro.other.name : ""; color: intro.t.fgBright; font.family: intro.t.font; font.pixelSize: intro.t.fsHuge - 2; font.bold: true }
-      Text { visible: !!intro.other && !!intro.other.title; text: intro.other ? (intro.other.title || "") : ""; color: intro.t.fgDim; font.family: intro.t.font; font.pixelSize: intro.t.fsSmall + 1 }
+      Text { text: intro.other ? intro.other.name : ""; textFormat: Text.PlainText; color: intro.t.fgBright; font.family: intro.t.font; font.pixelSize: intro.t.fsHuge - 2; font.bold: true }
+      Text { visible: !!intro.other && !!intro.other.title; text: intro.other ? (intro.other.title || "") : ""; textFormat: Text.PlainText; color: intro.t.fgDim; font.family: intro.t.font; font.pixelSize: intro.t.fsSmall + 1 }
     }
   }
 
   Text {
     visible: !intro.other
     text: !intro.c ? "" : (intro.c.kind === "mpim" ? intro.ws.convLabel(intro.conv) : (intro.c.kind === "private" ? "🔒 " : "# ") + intro.c.name)
+    textFormat: Text.PlainText
     color: intro.t.fgBright
     font.family: intro.t.font
     font.pixelSize: intro.t.fsHuge + 2

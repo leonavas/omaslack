@@ -222,6 +222,7 @@ DialogFrame {
       spacing: d.t.sp(2)
       Text {
         text: d.ws ? d.app.tr("For ", "Para ") + (d.ws.team.name || "") + ":" : d.app.tr("Suggestions", "Sugestões")
+        textFormat: Text.PlainText
         color: d.t.fgDim
         font.family: d.t.font
         font.pixelSize: d.t.fsSmall

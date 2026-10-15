@@ -393,6 +393,7 @@ Item {
         width: parent.width
         elide: Text.ElideMiddle
         text: v.file ? (v.file.title || v.file.name || v.app.tr("image", "imagem")) : ""
+        textFormat: Text.PlainText
         color: v.ink
         font.family: v.t.font
         font.pixelSize: v.t.fsText
@@ -403,6 +404,7 @@ Item {
         width: parent.width
         elide: Text.ElideRight
         text: bar.subtitle
+        textFormat: Text.PlainText
         color: v.inkDim
         font.family: v.t.font
         font.pixelSize: v.t.fsSmall

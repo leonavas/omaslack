@@ -38,7 +38,7 @@ Item {
   readonly property bool paused: d.pausedUntil !== null
   readonly property string teamName: d.ws ? (d.ws.team.name || d.ws.team.domain || "") : ""
   // New versions (core/Updater.qml): "Check for updates", and the update
-  // under it while there is one, as in slick.
+  // under it while there is one.
   readonly property var up: d.app.updater
   readonly property string upPhase: d.up ? d.up.phase : ""
 
@@ -120,7 +120,7 @@ Item {
     d.closed()
     w.dialog("confirm", {
       title: a.tr("Sign out of ", "Sair de ") + name + "?",
-      text: a.tr("This app forgets the session. Slack in your browser stays signed in.", "Este app esquece a sessão. O Slack no navegador continua conectado."),
+      text: a.tr("This app forgets the session, with this workspace's drafts and cached files. Slack in your browser stays signed in.", "Este app esquece a sessão, com os rascunhos e arquivos em cache deste workspace. O Slack no navegador continua conectado."),
       confirm: a.tr("Sign out", "Sair"), danger: true,
       action: function() { a.signOut(team) }
     })
@@ -223,6 +223,7 @@ Item {
           Text {
             width: parent.width
             text: d.meUser ? (d.meUser.display || d.meUser.real || d.meUser.name || "") : ""
+            textFormat: Text.PlainText
             color: d.t.fgBright
             font.family: d.t.font
             font.pixelSize: d.t.fsText + 1
@@ -321,6 +322,7 @@ Item {
                   Text {
                     width: parent.width
                     text: d.status ? (d.status.text || d.app.tr("(no text)", "(sem texto)")) : d.app.tr("Update your status", "Atualizar seu status")
+                    textFormat: Text.PlainText
                     color: d.status ? d.t.fg : d.t.fgDim
                     font.family: d.t.font
                     font.pixelSize: d.t.fsText - 1
@@ -374,6 +376,7 @@ Item {
                 Text {
                   width: parent.width
                   text: ir.it.label
+                  textFormat: Text.PlainText
                   color: ir.ink
                   font.bold: !!ir.it.good
                   font.family: d.t.font
@@ -384,6 +387,7 @@ Item {
                   visible: !!ir.it.sub2
                   width: parent.width
                   text: ir.it.sub2 || ""
+                  textFormat: Text.PlainText
                   color: ir.hot ? d.t.alpha(ir.ink, 0.8) : d.t.yellow
                   font.family: d.t.font
                   font.pixelSize: d.t.fsTiny
@@ -459,6 +463,7 @@ Item {
             id: sheadC
             Text {
               text: srow.modelData.label
+              textFormat: Text.PlainText
               color: srow.index === 0 && d.paused ? d.t.yellow : d.t.fgDim
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -484,6 +489,7 @@ Item {
                 anchors.leftMargin: d.t.sp(12)
                 anchors.verticalCenter: parent.verticalCenter
                 text: srow.modelData.label
+                textFormat: Text.PlainText
                 color: sr.hot ? d.t.selectedText : d.t.fg
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText - 1
@@ -493,6 +499,7 @@ Item {
                 anchors.rightMargin: d.t.sp(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: srow.modelData.hint || ""
+                textFormat: Text.PlainText
                 color: sr.hot ? d.t.selectedText : d.t.fgDim
                 font.family: d.t.font
                 font.pixelSize: d.t.fsSmall

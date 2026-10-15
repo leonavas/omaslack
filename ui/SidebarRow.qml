@@ -124,6 +124,7 @@ Item {
       Text {
         id: secLabel
         text: r.row.label || ""
+        textFormat: Text.PlainText
         color: r.row.unread ? r.t.unreadText : r.t.readText
         font.family: r.t.font
         font.pixelSize: r.t.fsSidebar - 1

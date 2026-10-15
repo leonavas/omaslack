@@ -23,7 +23,7 @@ Rectangle {
     anchors.centerIn: parent
     spacing: p.t.sp(6)
     Glyph { app: p.app; icon: p.arrow; size: p.t.fsSmall; color: p.ink; anchors.verticalCenter: parent.verticalCenter }
-    Text { text: p.text; color: p.ink; font.family: p.t.font; font.pixelSize: p.t.fsSmall; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+    Text { text: p.text; textFormat: Text.PlainText; color: p.ink; font.family: p.t.font; font.pixelSize: p.t.fsSmall; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
   }
   MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: p.clicked() }
 }

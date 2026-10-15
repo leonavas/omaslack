@@ -383,6 +383,7 @@ FloatingWindow {
         anchors.centerIn: parent
         width: Math.min(implicitWidth, toastBox.parent.width - appWin.t.sp(112))
         text: toastBox.text
+        textFormat: Text.PlainText
         color: appWin.t.fgBright
         font.family: appWin.t.font
         font.pixelSize: appWin.t.fsSmall + 1

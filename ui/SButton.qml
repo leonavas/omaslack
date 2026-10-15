@@ -47,6 +47,7 @@ Rectangle {
     Glyph { app: b.app; icon: b.icon; visible: b.icon !== ""; color: b.ink; size: b.t.fsSmall + 2; anchors.verticalCenter: parent.verticalCenter }
     Text {
       text: b.text
+      textFormat: Text.PlainText
       color: b.ink
       font.family: b.t.font
       font.pixelSize: b.small ? b.t.fsSmall : b.t.fsText - 1

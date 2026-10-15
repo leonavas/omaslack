@@ -231,6 +231,7 @@ DialogFrame {
               Avatar { app: d.app; ws: d.ws; user: modelData; size: d.t.sp(20); anchors.verticalCenter: parent.verticalCenter }
               Text {
                 text: d.ws ? d.ws.userName(modelData) : ""
+                textFormat: Text.PlainText
                 color: d.t.fgBright
                 font.family: d.t.font
                 font.pixelSize: d.t.fsText - 1
@@ -340,6 +341,7 @@ DialogFrame {
               id: nameText
               anchors.verticalCenter: parent.verticalCenter
               text: rowItem.modelData.kind === "user" ? (rowItem.u ? rowItem.u.name : "") : rowItem.modelData.name
+              textFormat: Text.PlainText
               color: rowItem.ink
               font.family: d.t.font
               font.pixelSize: d.t.fsText
@@ -372,6 +374,7 @@ DialogFrame {
                 if (u.title) parts.push(u.title)
                 return parts.join("  ·  ")
               }
+              textFormat: Text.PlainText
               color: rowItem.dim
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -410,6 +413,7 @@ DialogFrame {
       width: parent.width
       wrapMode: Text.Wrap
       text: "󰗖  " + d.error
+      textFormat: Text.PlainText
       color: d.t.red
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall

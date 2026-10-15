@@ -7,8 +7,7 @@ import qs.Ui
 import "lib/Registry.js" as Registry
 import "lib/Bar.js" as Bar
 
-// The bar's door into the Slack client, the way slick's bar widget does
-// it: Slack's mark in white with a faint
+// The bar's door into the Slack client: Slack's mark in white with a faint
 // outline, a red badge for DMs and a blue one for channels, a preview of
 // what is waiting on hover, the reactions to your messages floating out of
 // the icon, and a menu on right click. The app itself is the plugin's
@@ -16,7 +15,7 @@ import "lib/Bar.js" as Bar
 // badges and the card show.
 BarWidget {
   id: root
-  moduleName: "leonavas.omaslack"
+  moduleName: "omaslack"
 
   // ---------------------------------------------------------------- settings
   readonly property string iconStyle: String(setting("iconStyle", "Outline"))
@@ -78,7 +77,7 @@ BarWidget {
   property var service: null
   function findService() {
     var s = null
-    try { if (root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function") s = root.bar.shell.serviceFor("leonavas.omaslack") } catch (e) { s = null }
+    try { if (root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function") s = root.bar.shell.serviceFor("omaslack") } catch (e) { s = null }
     if (!s) s = Registry.service
     root.service = s
   }
@@ -94,10 +93,10 @@ BarWidget {
   readonly property bool clock24: root.service ? root.service.clock24 : true
 
   // ------------------------------------------------------------------ window
-  // What slick's window was there is ours here: open (mapped), parked in the
-  // special workspace, focused. The service moves it and sends the
-  // notifications; these settings go to it, and it writes the app's
-  // toggles of the notifications back here (writeSetting).
+  // The app's window: open (mapped), parked in the special workspace,
+  // focused. The service moves it and sends the notifications; these
+  // settings go to it, and it writes the app's toggles of the
+  // notifications back here (writeSetting).
   readonly property bool running: !!root.service && root.service.windowOpen
   readonly property bool focused: !!root.service && root.service.windowFocused
   readonly property bool parked: !!root.service && root.service.parked
@@ -128,8 +127,7 @@ BarWidget {
     s.barOptions = options
   }
 
-  // Signed out is what slick not running (or not installed) was there: a
-  // dimmed mark, and a card that leads to the sign-in.
+  // Signed out: a dimmed mark, and a card that leads to the sign-in.
   readonly property bool signedIn: !!root.service && root.service.signedIn
   readonly property bool notSignedIn: !!root.service && !root.service.signedIn
 
@@ -739,10 +737,9 @@ BarWidget {
       property int delay: 0
       readonly property real from: bubbles.start
       readonly property real to: bubbles.start + bubbles.direction * bubbles.travel
-      // Slack's picture comes over the network, where slick's was a file
-      // at hand: the bubble rises once it is in (or didn't come), and after
-      // a couple of seconds as the character (or :name:) instead, so it
-      // never flies empty.
+      // Slack's picture comes over the network: the bubble rises once it
+      // is in (or didn't come), and after a couple of seconds as the
+      // character (or :name:) instead, so it never flies empty.
       property bool gaveUp: false
       readonly property bool ready: bubbleGlyph.settled || bubble.gaveUp
 

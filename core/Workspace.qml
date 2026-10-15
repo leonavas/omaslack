@@ -29,6 +29,7 @@ Item {
   property bool booted: false        // users + conversations known
   property bool live: false          // socket up
   property string authError: ""      // set when Slack refused the session
+  property bool signedOut: false     // on its way out: nothing more is saved
   property string toast: ""
   property int toastSerial: 0
 
@@ -731,18 +732,26 @@ Item {
   property int _backoff: 2000
   property real _upSince: 0
 
+  // The socket's URL carries the session: only ever a wss:// one on a
+  // Slack host (transport.py refuses any other too).
+  function slackSocket(url) {
+    var m = String(url || "").match(/^wss:\/\/([^\/?#@]+)(?:[\/?#]|$)/i)
+    var h = m ? m[1].replace(/:\d+$/, "").toLowerCase() : ""
+    return h === "slack.com" || /\.slack\.com$/.test(h)
+  }
+
   function connectSocket() {
     if (wire.socketOpen) return
     // The demo's pretend socket is always up (lib/Demo.js, playDemo).
     if (root.account.demo) { root.onSocketUp(); return }
     var tokenIsSession = !!root.account.cookie
     function viaRtm() {
-      root.api("rtm.connect", {}, function(b) { if (b.url) wire.openSocket(b.url) }, function() { reconnect.restartWith() })
+      root.api("rtm.connect", {}, function(b) { if (root.slackSocket(b.url)) wire.openSocket(b.url) }, function() { reconnect.restartWith() })
     }
     if (!tokenIsSession) { viaRtm(); return }
     root.api("client.getWebSocketURL", {}, function(b) {
       var base = String(b.primary_websocket_url || "")
-      if (base.indexOf("wss://") !== 0) { viaRtm(); return }
+      if (!root.slackSocket(base)) { viaRtm(); return }
       var q = [
         ["token", root.account.token], ["sync_desync", "1"], ["slack_client", "desktop"],
         ["start_args", "?agent=client&org_wide_aware=true&eac_cache_ts=true&cache_ts=0&name_tagging=true&only_self_subteams=true&connect_only=true&ms_latest=true"],
@@ -1169,7 +1178,7 @@ Item {
     if (!dm) {
       if (isReply && root.followsThread(chan, m.threadTs)) {
         // A reply in a thread you follow notifies whatever the channel's
-        // level, as in Slack (and slick's `message.new`), except in a
+        // level, as in Slack, except in a
         // muted channel unless it mentions you.
         if (p.muted && !mention) return
       } else {
@@ -1970,7 +1979,7 @@ Item {
     root._fetching[url] = true
     var safe = String(name || "file").replace(/[\/\x00-\x1f]/g, "_").slice(-80)
     var hash = Qt.md5(url).slice(0, 16)
-    var dest = (root.app ? root.app.cacheDir : "/tmp") + "/files/" + root.teamId + "/" + hash + "-" + safe
+    var dest = root.cacheDir + "/files/" + root.teamId + "/" + hash + "-" + safe
     wire.download(url, dest, function(r) {
       delete root._fetching[url]
       if (r.ok) { root.localFiles[url] = r.path; root.filesRev++; if (cb) cb(r.path) }
@@ -1979,24 +1988,35 @@ Item {
     return ""
   }
 
+  // Into Downloads, beside what's there: a name already taken becomes
+  // "name (1).ext" (transport.py's `no_clobber`).
   function saveFile(f) {
     if (!f.download) return
-    var dir = root.app ? root.app.downloadsDir : "/tmp"
-    var dest = dir + "/" + String(f.name).replace(/[\/\x00-\x1f]/g, "_")
+    var dir = root.app ? root.app.downloadsDir : (Quickshell.env("XDG_DOWNLOAD_DIR") || (Quickshell.env("HOME") || "") + "/Downloads")
+    var name = String(f.name || "").replace(/[\/\x00-\x1f]/g, "_")
+    if (/^\.*$/.test(name)) name = "file"
     root.say(root.tr("Downloading ", "Baixando ") + f.name + "…")
-    wire.download(f.download, dest, function(r) {
+    wire.download(f.download, dir + "/" + name, function(r) {
       if (r.ok) root.say(root.tr("Saved to ", "Salvo em ") + r.path)
       else root.say(r.error === "html" ? root.tr("Slack didn't hand over the file (session expired?)", "O Slack não entregou o arquivo (sessão expirada?)") : root.tr("Download failed: ", "Download falhou: ") + r.error)
-    }, f.mimetype === "text/html")
+    }, f.mimetype === "text/html", false, true)
   }
 
   function openFile(f) {
     var url = f.download || f.full
-    if (!url) { if (f.permalink) Qt.openUrlExternally(f.permalink); return }
+    if (!url) { if (f.permalink && root.app) root.app.openUrl(f.permalink); return }
     var have = root.localFiles[url]
-    if (have) { Quickshell.execDetached(["touch", "-c", "--", have]); Quickshell.execDetached(["xdg-open", have]); return }
+    if (have) { Quickshell.execDetached(["touch", "-c", "--", have]); root.openLocal(have); return }
     root.say(root.tr("Opening ", "Abrindo ") + f.name + "…")
-    root.fetchFile(url, f.name, function(path) { if (path) Quickshell.execDetached(["xdg-open", path]); else root.say(root.tr("Couldn't open the file", "Não abriu o arquivo")) })
+    root.fetchFile(url, f.name, function(path) { if (path) root.openLocal(path); else root.say(root.tr("Couldn't open the file", "Não abriu o arquivo")) })
+  }
+  // A file that would run rather than open (a script, a launcher, a
+  // program, or one marked executable) shows in its folder instead.
+  function openLocal(path) {
+    var runs = /\.(desktop|sh|bash|zsh|fish|ksh|csh|command|run|bin|appimage|exe|msi|com|scr|bat|cmd|ps1|vbs|jar|jnlp)$/i.test(path)
+    if (runs) root.say(root.tr("Showing it in its folder: this kind of file can run programs", "Mostrando na pasta: esse tipo de arquivo pode executar programas"))
+    Quickshell.execDetached(["sh", "-c", 'if [ "$2" = 1 ] || [ -x "$1" ]; then exec xdg-open "${1%/*}"; fi; exec xdg-open "$1"',
+                             "omaslack-open", path, runs ? "1" : "0"])
   }
 
   // ---------------------------------------------------------------- files
@@ -2679,7 +2699,7 @@ Item {
   }
 
   // Reactions other people put on your messages, newest first: for a day
-  // and at most 20, as slick keeps them for its widget. One taken back
+  // and at most 20, for the bar's widget. One taken back
   // leaves, and so does every one in a conversation once it is read: open
   // in front of you, or unread before and not any more.
   // [{conv, ts, name, user, at, msg, wasUnread}]. `added` comes only for
@@ -2728,8 +2748,8 @@ Item {
 
   // While the socket is down its events don't come, but client.counts
   // (every 15 s then) still moves each conversation's newest message: the
-  // messages behind it are fetched and go through maybeNotify, as slick
-  // announces them within 15 seconds. What was waiting at start-up is not.
+  // messages behind it are fetched and go through maybeNotify, so they
+  // are announced within 15 seconds. What was waiting at start-up is not.
   property var _heard: null           // conv → newest ts accounted for
   function noticeQuietNews() {
     var first = root._heard === null
@@ -2761,7 +2781,11 @@ Item {
   }
 
   // ---------------------------------------------------------------- cache
-  readonly property string cachePath: (root.app ? root.app.cacheDir : "/tmp") + "/team-" + root.teamId + ".json"
+  // The app's cache dir; before the app is handed in, the same one from the
+  // environment (never a shared, guessable /tmp path).
+  readonly property string cacheDir: root.app ? root.app.cacheDir
+                                              : (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") || "") + "/.cache") + "/omaslack"
+  readonly property string cachePath: root.cacheDir + "/team-" + root.teamId + ".json"
 
   FileView {
     id: cacheFile
@@ -2832,10 +2856,10 @@ Item {
   }
 
   function saveCache() {
-    if (!root.booted) return
+    if (!root.booted || root.signedOut) return
     var convs = {}
     for (var id in root.convs) if (!root.convs[id].guest) convs[id] = root.convs[id]
-    // Like slick's: the last 50 messages of each recent conversation, but
+    // The last 50 messages of each recent conversation, but
     // not answers only you saw (they were for this session) nor sends still
     // on their way; a stretch away from the present (`detached`) neither.
     var recents = root.recents.filter(function(x) { return !!convs[x] })

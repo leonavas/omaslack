@@ -21,7 +21,7 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string pluginId: "leonavas.omaslack"
+  readonly property string pluginId: "omaslack"
   // Views find the app here before anything is handed to them.
   readonly property bool _registered: { Registry.service = root; return true }
   readonly property string home: Quickshell.env("HOME") || ""
@@ -66,6 +66,9 @@ Item {
   }
   readonly property real zoom: setting("zoom", 1.0)
   readonly property bool slackEmoji: setting("emojiStyle", "slack") !== "system"
+  // Pictures in link previews and apps' messages from other sites, which
+  // load straight from them (MessageBody.imageSource). Slack's own always do.
+  readonly property bool previewImages: setting("previewImages", true) !== false
   function tr(en, pt) { return root.lang === "pt-BR" ? pt : en }
 
   FileView {
@@ -87,6 +90,8 @@ Item {
     return t[key] === undefined ? fallback : t[key]
   }
   function setTeamSetting(team, key, value) {
+    // Not for a workspace signed out of (a draft saved as its view goes).
+    if (!root.accounts.some(function(a) { return a.teamId === team })) return
     var teams = U.copy(root.settings.teams || {})
     var t = U.copy(teams[team] || {})
     t[key] = value
@@ -121,10 +126,13 @@ Item {
   // Pretend workspaces (lib/Demo.js), for trying the app without signing in.
   readonly property bool demo: Quickshell.env("SLACKQS_DEMO") === "1"
 
+  // Written by transport.py (write_private): 0600 from its first byte and
+  // replaced in one step, never a moment readable by others or half there.
   function saveAccounts() {
     if (root.demo) return
-    accountsFile.setText(JSON.stringify({ accounts: root.accounts }, null, 2))
-    Quickshell.execDetached(["chmod", "600", accountsFile.path])
+    utilWire.writePrivate("accounts.json", JSON.stringify({ accounts: root.accounts }, null, 2), function(r) {
+      if (!r.ok) console.warn("omaslack: couldn't save the accounts:", r.error)
+    })
   }
 
   function accountSeen(teamId, info) {
@@ -149,11 +157,25 @@ Item {
     root.setSetting("active", acc.teamId)
   }
 
+  // Signing out forgets the workspace here, and only here: its session, its
+  // cache and fetched files, its drafts, sent messages and place in
+  // settings.json. Nothing is revoked on Slack's side (a pasted session may
+  // be your browser's own). With the last one gone, the sign-in window's
+  // browser profile (its cookies) and cache go too.
   function signOut(teamId) {
+    root.workspaces.forEach(function(w) { if (w.teamId === teamId) w.signedOut = true })
     root.accounts = root.accounts.filter(function(a) { return a.teamId !== teamId })
     root.saveAccounts()
     if (root.currentTeam === teamId) root.currentTeam = root.accounts.length ? root.accounts[0].teamId : ""
-    Quickshell.execDetached(["rm", "-f", root.cacheDir + "/team-" + teamId + ".json"])
+    var teams = U.copy(root.settings.teams || {})
+    delete teams[teamId]
+    root.setSetting("teams", teams)
+    if (root.setting("active", "") === teamId) root.setSetting("active", root.currentTeam)
+    // A Slack id, or nothing is deleted (files/<id> sits beside files/avatars).
+    if (!/^[A-Z0-9]+$/.test(String(teamId))) return
+    var gone = [root.cacheDir + "/team-" + teamId + ".json", root.cacheDir + "/files/" + teamId]
+    if (!root.accounts.length && !loginProc.running) gone.push(root.webProfile, root.webCache)
+    Quickshell.execDetached(["rm", "-rf", "--"].concat(gone))
   }
 
   function switchTo(teamId) {
@@ -243,7 +265,9 @@ Item {
   // (hideWindow) unmaps it; the app keeps counting and notifying either way.
   property var barOptions: ({ specialName: "scratchpad", openInSpecial: true, hideMode: "Special workspace", launchForeground: true })
   property bool autoStarted: false
-  readonly property string specialName: String(root.barOptions.specialName || "scratchpad")
+  // Without what would split a hyprctl command (`;` between batch commands,
+  // `,` between a dispatcher's arguments) or a line.
+  readonly property string specialName: String(root.barOptions.specialName || "").replace(/[;,\x00-\x1f]/g, "") || "scratchpad"
   readonly property var toplevel: root.windowOpen ? root.ourToplevel() : null
   readonly property bool parked: root.workspaceOf(root.toplevel) === "special:" + root.specialName
   readonly property bool specialShown: {
@@ -323,7 +347,7 @@ Item {
   }
   Timer { id: launchRuleWait; interval: 1000; onTriggered: if (root._launchPending) root.mapLaunch() }
 
-  function luaString(text) { return '"' + String(text).replace(/["\\]/g, "\\$&") + '"' }
+  function luaString(text) { return '"' + String(text).replace(/["\\]/g, "\\$&").replace(/[\x00-\x1f]/g, "") + '"' }
   // One name per kind of launch: a named rule is declared again on each
   // launch, and a foreground one must not keep a background one's effects.
   function launchRuleLua(on) {
@@ -390,9 +414,9 @@ Item {
     interval: 200
     onTriggered: {
       var lua = Hyprland.usingLua === true
-      var hide = lua ? 'hl.dsp.workspace.toggle_special("' + root.specialName + '")' : "togglespecialworkspace " + root.specialName
+      var hide = lua ? "hl.dsp.workspace.toggle_special(" + root.luaString(root.specialName) + ")" : "togglespecialworkspace " + root.specialName
       var back = root._launchBack
-      var focus = back.length === 0 ? "" : lua ? 'hl.dsp.focus({ window = "' + back + '" })' : "focuswindow " + back
+      var focus = back.length === 0 ? "" : lua ? "hl.dsp.focus({ window = " + root.luaString(back) + " })" : "focuswindow " + back
       Quickshell.execDetached(["bash", "-c",
         'shown=$(hyprctl monitors -j | jq -r \'.[] | select(.focused) | .specialWorkspace.name\'); '
         + '[ "$shown" = "special:$1" ] && hyprctl dispatch "$2" >/dev/null; '
@@ -420,11 +444,11 @@ Item {
     Hyprland.dispatch(Hyprland.usingLua === true ? luaForm : legacyForm)
   }
   function moveWindow(address, workspace, silent) {
-    root.hyprDispatch('hl.dsp.window.move({ window = "' + address + '", workspace = "' + workspace + '"' + (silent ? ", silent = true" : "") + " })",
+    root.hyprDispatch("hl.dsp.window.move({ window = " + root.luaString(address) + ", workspace = " + root.luaString(workspace) + (silent ? ", silent = true" : "") + " })",
                       (silent ? "movetoworkspacesilent " : "movetoworkspace ") + workspace + "," + address)
   }
   function toggleSpecial() {
-    root.hyprDispatch('hl.dsp.workspace.toggle_special("' + root.specialName + '")', "togglespecialworkspace " + root.specialName)
+    root.hyprDispatch("hl.dsp.workspace.toggle_special(" + root.luaString(root.specialName) + ")", "togglespecialworkspace " + root.specialName)
   }
 
   function windowAddress() {
@@ -574,7 +598,10 @@ Item {
 
   Process {
     id: loginProc
-    environment: ({ QT_FORCE_STDERR_LOGGING: "1", QTWEBENGINE_DISABLE_SANDBOX: "0" })
+    // Chromium's sandbox stays on: Qt only asks whether
+    // QTWEBENGINE_DISABLE_SANDBOX is set (any value turns it off), so it's
+    // taken out of what the window inherits (null), and again by the launcher.
+    environment: ({ QT_FORCE_STDERR_LOGGING: "1", QTWEBENGINE_DISABLE_SANDBOX: null })
     stdout: SplitParser { onRead: data => root.loginLine(data) }
     stderr: SplitParser { onRead: data => root.loginLine(data) }
     onExited: (code, status) => { purgeSoon.restart(); root.loginExited(code) }
@@ -601,8 +628,8 @@ Item {
     root._loginResult = null
     var known = root.accounts.map(function(a) { return a.teamId }).join(",")
     var qml = root.pluginDir + "/login/Login.qml"
-    loginProc.command = ["bash", "-c", 'bin=$(command -v qml6 || true); [ -x "$bin" ] || bin=/usr/lib/qt6/bin/qml; [ -x "$bin" ] || bin=$(command -v qml); exec "$bin" "$@"',
-                         "qml", qml, "--", root.webProfile, known, root.lang, String(workspace || "").trim(), root.webCache]
+    loginProc.command = ["bash", "-c", 'unset QTWEBENGINE_DISABLE_SANDBOX; bin=$(command -v qml6 || true); [ -x "$bin" ] || bin=/usr/lib/qt6/bin/qml; [ -x "$bin" ] || bin=$(command -v qml); exec "$bin" "$@"',
+                         "qml", qml, "--", root.webProfile, known, root.lang, String(workspace || "").trim(), root.webCache, U.chromeUa()]
     root.loginRunning = true
     loginProc.running = true
   }
@@ -616,7 +643,7 @@ Item {
       return
     }
     if (line.indexOf("SLACKQS-STATUS ") >= 0) root.loginStatus = line.slice(line.indexOf("SLACKQS-STATUS ") + 15)
-    if (/module "QtWebEngine" is not installed|QtWebEngine.*not installed/.test(line)) root.loginError = root.tr("The sign-in window needs Qt WebEngine (pacman -S qt6-webengine). You can paste a token instead.", "A janela de login precisa do Qt WebEngine (pacman -S qt6-webengine). Você pode colar um token.")
+    if (/module "QtWebEngine" is not installed|QtWebEngine.*not installed/.test(line)) root.loginError = root.tr("Install the qt6-webengine package to use the sign-in window, or sign in with a token.", "Instale o pacote qt6-webengine para usar a janela de login, ou entre com um token.")
   }
 
   function loginExited(code) {
@@ -870,13 +897,18 @@ Item {
     Quickshell.execDetached(["wl-copy", "--", String(text)])
   }
 
+  // A link from a message: a permalink to this workspace opens here; out
+  // of the app only web pages and mail (no file:, slack:, or any scheme
+  // that would hand it to some other program).
   function openUrl(url) {
+    url = String(url || "").trim()
     if (!url) return
     var link = U.parsePermalink(url)
     if (link && root.current && url.indexOf((root.current.team.domain || "-") + ".slack.com") >= 0) {
       root.current.open(link.conv, { ts: link.ts, threadTs: link.threadTs })
       return
     }
+    if (!/^(https?:\/\/|mailto:)/i.test(url)) { console.warn("omaslack: not opening a link of this kind:", url.slice(0, 40)); return }
     Qt.openUrlExternally(url)
   }
 
@@ -887,7 +919,10 @@ Item {
 
   // ---------------------------------------------------------------- lifecycle
   Component.onCompleted: {
-    Quickshell.execDetached(["mkdir", "-p", "-m", "700", root.configDir, root.cacheDir, root.dataDir])
+    // Ours alone: the dirs 0700 (an existing one too), the sessions 0600
+    // (one saved looser by an older version, or by hand).
+    Quickshell.execDetached(["sh", "-c", 'mkdir -p -m 700 -- "$@" && chmod 700 -- "$@"; [ -f "$1/accounts.json" ] && chmod 600 -- "$1/accounts.json"; exit 0',
+                             "omaslack-dirs", root.configDir, root.cacheDir, root.dataDir])
     photoList.running = true
     Registry.service = root
     root.ready = true
@@ -897,8 +932,8 @@ Item {
       // Images of files fetched with the session: a week unseen is enough.
       // Their modification time is their last use (reused ones are touched:
       // transport.py's `reuse`, Workspace.openFile), so what you keep
-      // looking at stays.
-      Quickshell.execDetached(["find", root.cacheDir + "/files", "-type", "f", "-mtime", "+7", "-delete"])
+      // looking at stays. Images pasted into the composer go after a week too.
+      Quickshell.execDetached(["find", root.cacheDir + "/files", root.cacheDir + "/paste", "-type", "f", "-mtime", "+7", "-delete"])
     })
   }
 

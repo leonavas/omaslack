@@ -781,6 +781,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: parent.width
           text: s.app.tr("Search messages, channels and people in ", "Buscar mensagens, canais e pessoas em ") + (s.ws ? s.ws.team.name : "")
+          textFormat: Text.PlainText
           color: s.t.fgDim
           font: input.font
           elide: Text.ElideRight
@@ -1019,8 +1020,8 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: s.t.sp(5)
                 spacing: s.t.sp(6)
-                Text { text: rowItem.r.text; color: s.t.fgDim; font.family: s.t.font; font.pixelSize: s.t.fsSmall; font.bold: true }
-                Text { visible: rowItem.r.extra !== ""; text: rowItem.r.extra; color: s.t.alpha(s.t.fgDim, 0.8); font.family: s.t.font; font.pixelSize: s.t.fsSmall }
+                Text { text: rowItem.r.text; textFormat: Text.PlainText; color: s.t.fgDim; font.family: s.t.font; font.pixelSize: s.t.fsSmall; font.bold: true }
+                Text { visible: rowItem.r.extra !== ""; text: rowItem.r.extra; textFormat: Text.PlainText; color: s.t.alpha(s.t.fgDim, 0.8); font.family: s.t.font; font.pixelSize: s.t.fsSmall }
               }
             }
           }
@@ -1036,6 +1037,7 @@ Item {
                 width: parent.width - s.t.sp(40)
                 anchors.verticalCenter: parent.verticalCenter
                 text: rowItem.r.text
+                textFormat: Text.PlainText
                 color: s.t.fgDim
                 font.family: s.t.font
                 font.pixelSize: s.t.fsSmall + 1
@@ -1055,6 +1057,7 @@ Item {
                 x: s.t.sp(20)
                 anchors.verticalCenter: parent.verticalCenter
                 text: rowItem.r.text
+                textFormat: Text.PlainText
                 color: s.t.link
                 font.family: s.t.font
                 font.pixelSize: s.t.fsSmall
@@ -1184,6 +1187,7 @@ Item {
                     anchors.verticalCenter: prName.verticalCenter
                     width: Math.max(0, Math.min(implicitWidth, parent.width - prName.width - prEmoji.width - s.t.sp(12)))
                     text: pr.e.real && pr.e.real !== pr.e.name ? pr.e.real : (pr.e.handle ? "@" + pr.e.handle : "")
+                    textFormat: Text.PlainText
                     color: s.t.fgDim
                     font.family: s.t.font
                     font.pixelSize: s.t.fsSmall
@@ -1194,6 +1198,7 @@ Item {
                   visible: text !== ""
                   width: parent.width
                   text: pr.e.deleted ? s.app.tr("Deactivated account", "Conta desativada") + (pr.e.title ? "  ·  " + pr.e.title : "") : (pr.e.title || (pr.st ? pr.st.text : ""))
+                  textFormat: Text.PlainText
                   color: s.t.fgDim
                   font.family: s.t.font
                   font.pixelSize: s.t.fsSmall
@@ -1244,6 +1249,7 @@ Item {
                     id: hrName
                     width: Math.min(implicitWidth, parent.width * 0.5)
                     text: s.author(hr.h)
+                    textFormat: Text.PlainText
                     color: s.t.fgBright
                     font.family: s.t.font
                     font.pixelSize: s.t.fsText - 1
@@ -1257,6 +1263,7 @@ Item {
                     anchors.rightMargin: s.t.sp(8)
                     anchors.baseline: hrName.baseline
                     text: s.place(hr.h) + (hr.h.threadTs ? s.app.tr(" · in a thread", " · numa conversa") : "")
+                    textFormat: Text.PlainText
                     color: s.t.fgDim
                     font.family: s.t.font
                     font.pixelSize: s.t.fsSmall
@@ -1338,6 +1345,7 @@ Item {
         anchors.rightMargin: s.t.sp(20)
         anchors.verticalCenter: parent.verticalCenter
         text: { s.msgRev; s.query; s.sort; msgTimer.running; var e = s.entry(); return s.isSearching() ? s.app.tr("Searching…", "Buscando…") : (e && e.error ? e.error : "") }
+        textFormat: Text.PlainText
         color: { s.msgRev; s.query; s.sort; var e = s.entry(); return e && e.error ? s.t.red : s.t.fgDim }
         font.family: s.t.font
         font.pixelSize: s.t.fsTiny
@@ -1532,6 +1540,7 @@ Item {
           Text {
             width: parent.width
             text: hp.h ? s.place(hp.h) : ""
+            textFormat: Text.PlainText
             color: s.t.fgBright
             font.family: s.t.font
             font.pixelSize: s.t.fsTitle
@@ -1593,6 +1602,7 @@ Item {
         visible: !hp.pd || hp.pd.loading || hp.pd.msgs.length === 0
         anchors.centerIn: hpFlick
         text: !hp.pd || hp.pd.loading ? s.app.tr("Loading…", "Carregando…") : (hp.pd.error || s.app.tr("Couldn't load this message", "Não deu para carregar esta mensagem"))
+        textFormat: Text.PlainText
         color: s.t.fgDim
         font.family: s.t.font
         font.pixelSize: s.t.fsSmall + 1
@@ -1658,6 +1668,7 @@ Item {
                   id: cpName
                   width: Math.min(implicitWidth, parent.width - (cpEmoji.visible ? cpEmoji.width + s.t.sp(8) : 0))
                   text: cp.e ? cp.e.label : ""
+                  textFormat: Text.PlainText
                   color: s.t.fgBright
                   font.family: s.t.font
                   font.pixelSize: s.t.fsHeader
@@ -1689,6 +1700,7 @@ Item {
                   if (cp.members && cp.e.ckind !== "mpim") bits.push(s.memberCount(cp.members))
                   return bits.join("  ·  ")
                 }
+                textFormat: Text.PlainText
                 color: s.t.fgDim
                 font.family: s.t.font
                 font.pixelSize: s.t.fsSmall
@@ -1732,6 +1744,7 @@ Item {
               Text {
                 width: parent.width
                 text: Md.flat({ text: modelData.text, blocks: [], files: [], attachments: [] }, s.ctx, 400)
+                textFormat: Text.PlainText
                 color: s.t.fg
                 font.family: s.t.font
                 font.pixelSize: s.t.fsSmall + 1
@@ -1756,6 +1769,7 @@ Item {
             visible: cp.msgs.length === 0
             x: s.t.sp(20)
             text: cp.pd && cp.pd.loading ? s.app.tr("Loading…", "Carregando…") : (cp.pd && cp.pd.error ? cp.pd.error : s.app.tr("No messages yet", "Nenhuma mensagem ainda"))
+            textFormat: Text.PlainText
             color: s.t.fgDim
             font.family: s.t.font
             font.pixelSize: s.t.fsSmall + 1
@@ -1836,6 +1850,7 @@ Item {
                   id: ppName
                   width: Math.min(implicitWidth, parent.width - s.t.sp(30))
                   text: pp.u ? pp.u.name + (pp.self ? s.app.tr(" (you)", " (você)") : "") : ""
+                  textFormat: Text.PlainText
                   color: s.t.fgBright
                   font.family: s.t.font
                   font.pixelSize: s.t.fsHeader + 2
@@ -1856,6 +1871,7 @@ Item {
                 visible: !!pp.u && !!pp.u.real && pp.u.real !== pp.u.name
                 width: parent.width
                 text: pp.u ? (pp.u.real || "") : ""
+                textFormat: Text.PlainText
                 color: s.t.fgDim
                 font.family: s.t.font
                 font.pixelSize: s.t.fsSmall + 1
@@ -1865,6 +1881,7 @@ Item {
                 visible: !!pp.u && !!pp.u.title
                 width: parent.width
                 text: pp.u ? (pp.u.title || "") : ""
+                textFormat: Text.PlainText
                 color: s.t.fg
                 font.family: s.t.font
                 font.pixelSize: s.t.fsText
@@ -1909,6 +1926,7 @@ Item {
             Text {
               width: parent.width - s.t.sp(24)
               text: pp.st ? pp.st.text + (pp.st.exp ? "  ·  " + U.untilLabel(pp.st.exp, s.app.lang, s.app.clock24) : "") : ""
+              textFormat: Text.PlainText
               color: s.t.fg
               font.family: s.t.font
               font.pixelSize: s.t.fsSmall + 1

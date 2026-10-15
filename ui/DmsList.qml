@@ -268,6 +268,7 @@ Rectangle {
             id: nameText
             width: parent.width - when.implicitWidth - dl.t.sp(8)
             text: row.modelData.label
+            textFormat: Text.PlainText
             color: row.ink
             font.family: dl.t.font
             font.pixelSize: dl.t.fsSidebar
@@ -340,6 +341,7 @@ Rectangle {
       wrapMode: Text.Wrap
       text: dl.query ? dl.app.tr("No DMs match “", "Nenhuma DM corresponde a “") + dl.query + "”"
             : (dl.unreadsOnly ? dl.app.tr("You're all caught up", "Você está em dia") : dl.app.tr("No direct messages yet", "Nenhuma mensagem direta ainda"))
+      textFormat: Text.PlainText
       color: dl.t.fgBright
       font.family: dl.t.font
       font.pixelSize: dl.t.fsText

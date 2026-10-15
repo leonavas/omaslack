@@ -16,7 +16,7 @@ DialogFrame {
   Column {
     width: parent.width
     spacing: d.t.sp(d.args.msg ? 16 : 12)
-    Text { width: parent.width; wrapMode: Text.Wrap; text: d.args.text || ""; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText }
+    Text { width: parent.width; wrapMode: Text.Wrap; text: d.args.text || ""; textFormat: Text.PlainText; color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText }
     Rectangle {
       visible: !!d.args.quote
       width: parent.width
@@ -25,7 +25,7 @@ DialogFrame {
       color: d.t.alpha(d.t.fg, 0.05)
       border.width: 1
       border.color: d.t.line
-      Text { id: quote; anchors.centerIn: parent; width: parent.width - d.t.sp(20); wrapMode: Text.Wrap; text: d.args.quote || ""; color: d.t.fgSoft; font.family: d.t.font; font.pixelSize: d.t.fsSmall; maximumLineCount: 6; elide: Text.ElideRight }
+      Text { id: quote; anchors.centerIn: parent; width: parent.width - d.t.sp(20); wrapMode: Text.Wrap; text: d.args.quote || ""; textFormat: Text.PlainText; color: d.t.fgSoft; font.family: d.t.font; font.pixelSize: d.t.fsSmall; maximumLineCount: 6; elide: Text.ElideRight }
     }
 
     // The message: photo, name, "Today at 7:53 AM", the body and its files.

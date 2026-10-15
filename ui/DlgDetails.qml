@@ -597,6 +597,7 @@ DialogFrame {
                       wrapMode: Text.Wrap
                       text: !d.c || !d.c.creator ? "" : (d.ws.userName(d.c.creator) || d.c.creator)
                           + (d.c.created ? d.app.tr(" on ", " em ") + U.fullDate(new Date(d.c.created * 1000), d.app.lang) : "")
+                      textFormat: Text.PlainText
                       color: d.t.fg
                       font.family: d.t.font
                       font.pixelSize: d.t.fsText
@@ -635,6 +636,7 @@ DialogFrame {
                       width: parent.width
                       wrapMode: Text.Wrap
                       text: d.app.tr("Leave ", "Sair de ") + d.hashName + d.app.tr("? It's private: you'll need an invitation to come back.", "? Ele é privado: você só volta com um convite.")
+                      textFormat: Text.PlainText
                       color: d.t.fg
                       font.family: d.t.font
                       font.pixelSize: d.t.fsSmall + 1
@@ -655,6 +657,7 @@ DialogFrame {
               width: parent.width
               wrapMode: Text.Wrap
               text: "󰗖  " + d.error
+              textFormat: Text.PlainText
               color: d.t.red
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -774,6 +777,7 @@ DialogFrame {
                   width: parent.width
                   Text {
                     text: mrow.isAdd ? d.app.tr("Add people", "Adicionar pessoas") : (d.ws.userName(mrow.modelData.id) || mrow.modelData.id)
+                    textFormat: Text.PlainText
                     color: mrow.isAdd ? d.t.fgBright : d.t.fgBright
                     font.family: d.t.font
                     font.pixelSize: d.t.fsText
@@ -804,6 +808,7 @@ DialogFrame {
                   width: parent.width
                   elide: Text.ElideRight
                   text: mrow.isAdd ? "" : (mrow.u ? (mrow.u.title || (mrow.u.real && mrow.u.real !== mrow.u.name ? mrow.u.real : "")) : "")
+                  textFormat: Text.PlainText
                   color: d.t.fgDim
                   font.family: d.t.font
                   font.pixelSize: d.t.fsSmall
@@ -859,6 +864,7 @@ DialogFrame {
             Text {
               anchors.verticalCenter: parent.verticalCenter
               text: d.app.tr("Add people to ", "Adicionar pessoas a ") + d.hashName
+              textFormat: Text.PlainText
               color: d.t.fgBright
               font.family: d.t.font
               font.pixelSize: d.t.fsTitle
@@ -897,7 +903,7 @@ DialogFrame {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: d.t.sp(6)
                     Avatar { app: d.app; ws: d.ws; user: pchip.modelData; size: d.t.sp(20); anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: d.ws.userName(pchip.modelData); color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: d.ws.userName(pchip.modelData); textFormat: Text.PlainText; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsText - 1; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                     Glyph { app: d.app; icon: "󰅖"; size: d.t.fsSmall; color: pchipMa.containsMouse ? d.t.fgBright : d.t.fgDim; anchors.verticalCenter: parent.verticalCenter }
                   }
                   MouseArea { id: pchipMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: d.unpickPerson(pchip.modelData) }
@@ -967,6 +973,7 @@ DialogFrame {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: crow.u ? crow.u.name : ""
+                  textFormat: Text.PlainText
                   color: crow.hot ? d.t.onColor(d.t.accent) : d.t.fg
                   font.family: d.t.font
                   font.pixelSize: d.t.fsText
@@ -975,6 +982,7 @@ DialogFrame {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: crow.u ? (crow.u.title || (crow.u.real && crow.u.real !== crow.u.name ? crow.u.real : "")) : ""
+                  textFormat: Text.PlainText
                   color: crow.hot ? d.t.alpha(d.t.onColor(d.t.accent), 0.75) : d.t.fgDim
                   font.family: d.t.font
                   font.pixelSize: d.t.fsSmall
@@ -1008,6 +1016,7 @@ DialogFrame {
               maximumLineCount: 2
               elide: Text.ElideRight
               text: d.error !== "" ? "󰗖  " + d.error : d.app.tr("Enter picks · Enter on empty adds · Esc goes back", "Enter escolhe · Enter vazio adiciona · Esc volta")
+              textFormat: Text.PlainText
               color: d.error !== "" ? d.t.red : d.t.fgDim
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -1098,7 +1107,7 @@ DialogFrame {
                 y: d.t.sp(16)
                 width: parent.width - d.t.sp(32)
                 spacing: d.t.sp(12)
-                Text { text: d.app.tr("Delete ", "Apagar ") + d.hashName + "?"; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsTitle; font.bold: true; width: parent.width; elide: Text.ElideRight }
+                Text { text: d.app.tr("Delete ", "Apagar ") + d.hashName + "?"; textFormat: Text.PlainText; color: d.t.fgBright; font.family: d.t.font; font.pixelSize: d.t.fsTitle; font.bold: true; width: parent.width; elide: Text.ElideRight }
                 Text {
                   width: parent.width
                   wrapMode: Text.Wrap
@@ -1150,6 +1159,7 @@ DialogFrame {
               width: parent.width
               wrapMode: Text.Wrap
               text: "󰗖  " + d.error
+              textFormat: Text.PlainText
               color: d.t.red
               font.family: d.t.font
               font.pixelSize: d.t.fsSmall
@@ -1226,6 +1236,7 @@ DialogFrame {
           width: parent.width
           elide: Text.ElideRight
           text: (d.priv ? "󰌾 " : "# ") + er.value
+          textFormat: Text.PlainText
           color: d.t.fg
           font.family: d.t.font
           font.pixelSize: d.t.fsText
@@ -1305,6 +1316,7 @@ DialogFrame {
           width: parent.width
           wrapMode: Text.Wrap
           text: "󰗖  " + d.error
+          textFormat: Text.PlainText
           color: d.t.red
           font.family: d.t.font
           font.pixelSize: d.t.fsSmall
@@ -1421,6 +1433,7 @@ DialogFrame {
           wrapMode: Text.Wrap
           text: sr.key === "convert" ? d.app.tr("Make ", "Tornar ") + d.hashName + d.app.tr(" private for good?", " privado de vez?")
               : d.app.tr("Archive ", "Arquivar ") + d.hashName + d.app.tr(" for everyone?", " para todos?")
+          textFormat: Text.PlainText
           color: d.t.fg
           font.family: d.t.font
           font.pixelSize: d.t.fsText - 1
