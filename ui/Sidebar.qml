@@ -104,7 +104,18 @@ Rectangle {
       width: list.width
       sidebar: side
     }
+
+    // The wheel / touchpad takes over from a pill's glide. Only notices
+    // it: a blocking handler would keep the list from scrolling.
+    WheelHandler {
+      acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+      blocking: false
+      target: null
+      onWheel: glide.stop()
+    }
   }
+
+  Glide { id: glide; view: list }
 
   // ---------------------------------------------------------------- drag
   // A conversation dragged onto a section moves there (in Slack too); a
@@ -192,6 +203,17 @@ Rectangle {
     return { up: up, down: down }
   }
 
+  // A pill glides to the row (found by key on each step: rows come and go).
+  function reveal(i, mode) {
+    var rows = side.ws ? side.ws.sidebarRows : []
+    var key = rows[i] ? rows[i].key : ""
+    if (!key) return
+    glide.to(function() {
+      var rs = side.ws ? side.ws.sidebarRows : []
+      for (var j = 0; j < rs.length; j++) if (rs[j].key === key) { list.positionViewAtIndex(j, mode); return }
+    })
+  }
+
   EdgePill {
     app: side.app
     visible: !side.narrow && (side.pills.up.mention >= 0 || side.pills.up.unread >= 0)
@@ -201,7 +223,7 @@ Rectangle {
     mention: side.pills.up.mention >= 0
     text: (mention ? side.app.tr("Unread mentions", "Menções não lidas") : side.app.tr("More unreads", "Mais não lidas"))
     arrow: "󰁝"
-    onClicked: list.positionViewAtIndex(mention ? side.pills.up.mention : side.pills.up.unread, ListView.Beginning)
+    onClicked: side.reveal(mention ? side.pills.up.mention : side.pills.up.unread, ListView.Beginning)
   }
   EdgePill {
     app: side.app
@@ -212,7 +234,7 @@ Rectangle {
     mention: side.pills.down.mention >= 0
     text: (mention ? side.app.tr("Unread mentions", "Menções não lidas") : side.app.tr("More unreads", "Mais não lidas"))
     arrow: "󰁅"
-    onClicked: list.positionViewAtIndex(mention ? side.pills.down.mention : side.pills.down.unread, ListView.End)
+    onClicked: side.reveal(mention ? side.pills.down.mention : side.pills.down.unread, ListView.End)
   }
 
   // ---------------------------------------------------------------- menus

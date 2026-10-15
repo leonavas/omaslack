@@ -250,8 +250,9 @@ Item {
     }
 
     // A newer version: a small green button over your photo, like slick's by
-    // your name (core/Updater.qml); faded while it updates, "reload" once
-    // it's on disk but not loaded. Your menu has it too.
+    // your name (core/Updater.qml): opens the update in a terminal; faded
+    // while that's open, "reload" once it's on disk but not loaded. Your
+    // menu has it too.
     Rectangle {
       id: upPill
       readonly property var up: rail.app.updater
@@ -283,9 +284,9 @@ Item {
       }
       PanelToolTip {
         visible: upMa.containsMouse
-        text: !upPill.up ? "" : upPill.busy ? rail.app.tr("Updating Slack to ", "Atualizando o Slack para ") + upPill.up.latest + "…"
+        text: !upPill.up ? "" : upPill.busy ? rail.app.tr("Updating Slack to ", "Atualizando o Slack para ") + upPill.up.latest + rail.app.tr(" in the terminal…", " no terminal…")
               : upPill.up.phase === "updated" ? rail.app.tr("Reload to use ", "Recarregue para usar a versão ") + upPill.up.latest
-              : upPill.up.how || rail.app.tr("Update to ", "Atualizar para ") + upPill.up.latest
+              : upPill.up.how || rail.app.tr("Update to ", "Atualizar para ") + upPill.up.latest + rail.app.tr(" · opens a terminal to confirm", " · abre um terminal para confirmar")
       }
     }
 

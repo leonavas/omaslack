@@ -4,7 +4,7 @@
 
 **A full Slack client that lives inside the Omarchy shell, drawn in your theme's colors, with a bar widget that badges what's waiting.**
 
-Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quickshell), with a small Python helper for the network. It shows up as Slack's mark in the bar. Click it and a window opens with Slack's familiar layout: the workspace rail, sidebar sections, conversations, threads and profiles, all in the current Omarchy theme. Inside the app it's simply called "Slack".
+Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quickshell), with a small Python helper for the network. It shows up as Slack's mark in the Omarchy bar. Click it and a window opens with Slack's familiar layout: the workspace rail, sidebar sections, conversations, threads and profiles, all in the current Omarchy theme. Inside the app it's simply called "Slack".
 
 ## Features
 
@@ -117,8 +117,14 @@ quickshell ipc -p "$OMARCHY_PATH/shell" call omaslack <command> [args]
 
 Omaslack checks the `manifest.json` on GitHub's `main` branch a little after start-up and every 6 hours. Only that plain file is fetched, and nothing of yours is sent. When a newer version exists, a green button shows over your photo in the rail. **Check for updates** in your account menu does the same check on demand.
 
-- **Installed with `omarchy plugin add`**: a click runs `omarchy plugin update`. The shell then reloads the plugin, and the new copy brings the window back and tells you how it went.
-- **Your own checkout** (a symlink or a git clone somewhere else): the click only tells you to `git pull` in that folder.
+Clicking it (or **Update to …** in your account menu or in About) opens the same floating terminal Omarchy uses for its own update. It shows the current and the new version and the exact command it will run, then asks before running it:
+
+- **Installed with `omarchy plugin add`**: `omarchy plugin update <id> --yes`.
+- **Your own checkout** (a symlink in Omarchy's plugin folder, or a git clone somewhere else): `git -C <folder> pull --ff-only`.
+
+Say no and the terminal closes. Say yes and the command runs with its output in view, followed by a line saying whether it worked. A failure, such as local changes in the way or a branch that can't fast-forward, shows git's message and changes nothing. Once it updated, the whole shell restarts with `omarchy-restart-shell`, as Omarchy's own update ends (a plugin rescan would keep the old QML); the terminal stays open, and the new copy brings the window back and tells you how it went. Press any key to close the terminal. A copy that isn't in git can't be updated from the app; the button tells you where to get the new version.
+
+The screen is `lib/update.sh`. It falls back to `xdg-terminal-exec` or `$TERMINAL` and a plain y/N prompt when Omarchy's helpers or `gum` are missing.
 
 ## Data and cache
 
@@ -138,6 +144,7 @@ The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`) are res
 - `SLACKQS_DEMO=1` runs the app against a pretend workspace (`lib/Demo.js`), so no sign-in is needed.
 - `SLACKQS_READONLY=1` only lets read methods reach Slack, for working against a real workspace safely.
 - `SLACKQS_UPDATE_DEV=1` treats whatever is on GitHub as newer, so you can see the update button.
+- `bash lib/update.sh run --dry-run --mode=checkout --folder=. --from=0.2.0 --to=0.3.0` shows the update screen in your current terminal without running anything.
 
 ## Notes
 

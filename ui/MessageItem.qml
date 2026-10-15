@@ -10,7 +10,8 @@ import "../lib/Registry.js" as Reg
 // One row of a conversation: a day divider and the New line when due, then
 // the message — photo and name heading a group, the body, files, reactions,
 // the thread's replies — with Slack's toolbar on hover. Runs of joins and
-// leaves are one quiet line.
+// leaves are one quiet line. Selected with the keyboard (MessageList) it
+// is outlined and takes Slack's keys for a message (`keyAction`).
 Item {
   id: m
   property var app: Reg.service
@@ -22,12 +23,17 @@ Item {
   property bool isParent: false
   property var ctx: null
   property var marks: null   // {color, bg}: search highlights (U+E000…U+E001) lit in the body
+  property bool selected: false   // the keyboard's message in its list: outlined
+  property bool keyed: false      // a message is selected and the mouse hasn't moved since: only that one lights up
+  property bool longTime: false   // "Today at 7:53 AM": shown on its own (Delete message)
   readonly property var t: app.theme
   readonly property var msg: row ? row.msg : null
   readonly property bool members: row && row.kind === "members"
   readonly property bool editing: !!ws && !!ws.editing && ws.editing.conv === conv && ws.editing.ts === (msg ? msg.ts : "")
   readonly property bool mine: msg && ws ? Model.isMine(msg, ws.me.id) : false
-  readonly property bool hovered: hover.hovered || toolbarHover.hovered
+  // Under the mouse; while the keyboard selects (`keyed`), the selected one.
+  readonly property bool hovered: keyed ? selected : (hover.hovered || toolbarHover.hovered)
+  readonly property bool ringed: selected && !editing
   readonly property bool mentionsMe: !!msg && !!ws && Md.mentionsMe(msg, ws.me.id) && !mine
   readonly property bool flash: !!msg && !!ws && ws.flashTs === msg.ts
   readonly property int pad: app.compact ? t.sp(2) : t.sp(4)
@@ -121,10 +127,39 @@ Item {
 
       Rectangle {
         anchors.fill: parent
+        // Selected, the row rounds into its focus ring.
+        anchors.margins: m.ringed ? m.t.sp(2) : 0
+        anchors.leftMargin: m.ringed ? m.t.sp(4) : 0
+        anchors.rightMargin: m.ringed ? m.t.sp(4) : 0
+        radius: m.ringed ? Math.max(6, m.t.radiusSmall) : 0
         color: m.flash ? m.t.flash : (m.editing ? m.t.alpha(m.t.yellow, 0.06) : (m.mentionsMe ? m.t.mentionRow : (m.hovered ? m.t.hover : "transparent")))
         Behavior on color { ColorAnimation { duration: 260 } }
       }
       Rectangle { visible: m.mentionsMe; width: m.t.sp(3); height: parent.height; color: m.t.yellow }
+      // Selected with the keyboard: Slack's focus ring, a soft glow around it.
+      Rectangle {
+        visible: m.ringed
+        anchors.fill: parent
+        anchors.margins: -m.t.sp(1)
+        anchors.leftMargin: m.t.sp(1)
+        anchors.rightMargin: m.t.sp(1)
+        radius: Math.max(6, m.t.radiusSmall) + m.t.sp(3)
+        color: "transparent"
+        border.width: m.t.sp(3)
+        border.color: m.t.alpha(m.t.accent, 0.3)
+      }
+      Rectangle {
+        visible: m.ringed
+        anchors.fill: parent
+        anchors.leftMargin: m.t.sp(4)
+        anchors.rightMargin: m.t.sp(4)
+        anchors.topMargin: m.t.sp(2)
+        anchors.bottomMargin: m.t.sp(2)
+        radius: Math.max(6, m.t.radiusSmall)
+        color: "transparent"
+        border.width: Math.max(2, m.t.sp(2))
+        border.color: m.t.accent
+      }
 
       HoverHandler { id: hover }
       TapHandler {
@@ -256,7 +291,7 @@ Item {
               }
               Text {
                 id: timeText
-                text: m.msg ? U.tsTime(m.msg.ts, m.app.clock24) : ""
+                text: !m.msg ? "" : (m.longTime ? U.atLabel(m.msg.ts, m.app.lang, m.app.clock24) : U.tsTime(m.msg.ts, m.app.clock24))
                 color: m.t.fgDim
                 font.family: m.t.font
                 font.pixelSize: m.t.fsTiny + 1
@@ -448,6 +483,53 @@ Item {
     m.win.emojiPicker(anchor, function(name) { m.ws.react(m.conv, m.msg.ts, name) }, {})
   }
 
+  // Remind me about this: when.
+  function remindItems(w, conv, msg) {
+    return [
+      { label: m.app.tr("In 20 minutes", "Em 20 minutos"), action: function() { w.remind(conv, msg, 20) } },
+      { label: m.app.tr("In 1 hour", "Em 1 hora"), action: function() { w.remind(conv, msg, 60) } },
+      { label: m.app.tr("In 3 hours", "Em 3 horas"), action: function() { w.remind(conv, msg, 180) } },
+      { label: m.app.tr("Tomorrow", "Amanhã"), action: function() { w.remind(conv, msg, U.minutesUntilTomorrow9()) } },
+      { label: m.app.tr("Next week", "Na próxima semana"), action: function() { w.remind(conv, msg, U.minutesUntilNextWeek9()) } }
+    ]
+  }
+
+  function copyLink(w, conv, msg) { m.app.copy(w.permalink(conv, msg)); m.win.toast(m.app.tr("Link copied", "Link copiado")) }
+
+  // Slack's keys on a selected message (MessageList): E edit and Delete /
+  // Backspace delete (yours only), R react, T or Enter the thread, A save,
+  // P pin, S or F forward, U mark unread, M remind, L copy link. True when
+  // the key is one of them.
+  function keyAction(key) {
+    if (!m.msg || m.members) return false
+    var keys = [Qt.Key_E, Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_R, Qt.Key_T, Qt.Key_Return, Qt.Key_Enter, Qt.Key_A, Qt.Key_P, Qt.Key_S, Qt.Key_F, Qt.Key_U, Qt.Key_M, Qt.Key_L]
+    if (keys.indexOf(key) < 0) return false
+    if (m.msg.pending || m.editing) return true
+    var w = m.ws, msg = m.msg, conv = m.conv
+    switch (key) {
+    case Qt.Key_E: if (m.mine) w.editing = { conv: conv, ts: msg.ts }; break
+    case Qt.Key_Delete:
+    case Qt.Key_Backspace: if (m.mine) m.win.confirmDelete(conv, msg); break
+    case Qt.Key_R: m.pickReaction(toolbar.visible ? reactBtn : box); break
+    case Qt.Key_T:
+    case Qt.Key_Return:
+    case Qt.Key_Enter: if (!m.inThread) w.openThread(conv, msg.threadTs || msg.ts); break
+    case Qt.Key_A: w.toggleSaved(conv, msg); break
+    case Qt.Key_P: w.togglePin(conv, msg); break
+    case Qt.Key_S:
+    case Qt.Key_F: m.win.dialog("forward", { conv: conv, msg: msg }); break
+    case Qt.Key_U: if (!m.inThread || msg.threadTs === msg.ts) w.markUnread(conv, msg.ts); break
+    case Qt.Key_M: {
+      // The reminder's times, where the ⋮ menu opens.
+      var p = toolbar.visible ? moreBtn.mapToItem(m.win.contentItem, 0, moreBtn.height + 4) : box.mapToItem(m.win.contentItem, box.width - m.t.sp(40), m.t.sp(8))
+      m.win.menu([{ title: m.app.tr("Remind me about this", "Lembrar-me disto") }].concat(m.remindItems(w, conv, msg)), p.x - m.t.sp(200), p.y)
+      break
+    }
+    case Qt.Key_L: m.copyLink(w, conv, msg); break
+    }
+    return true
+  }
+
   function openMenu(x, y) {
     if (!m.msg || m.msg.pending) return
     var w = m.ws, msg = m.msg, conv = m.conv
@@ -464,13 +546,7 @@ Item {
     }
     items.push({ separator: true })
     if (!m.inThread || msg.threadTs === msg.ts) items.push({ label: m.app.tr("Mark unread", "Marcar como não lida"), icon: "󰇰", hint: "U", action: function() { w.markUnread(conv, msg.ts) } })
-    items.push({ label: m.app.tr("Remind me about this", "Lembrar-me disto"), icon: "󰀠", sub: [
-      { label: m.app.tr("In 20 minutes", "Em 20 minutos"), action: function() { w.remind(conv, msg, 20) } },
-      { label: m.app.tr("In 1 hour", "Em 1 hora"), action: function() { w.remind(conv, msg, 60) } },
-      { label: m.app.tr("In 3 hours", "Em 3 horas"), action: function() { w.remind(conv, msg, 180) } },
-      { label: m.app.tr("Tomorrow", "Amanhã"), action: function() { w.remind(conv, msg, U.minutesUntilTomorrow9()) } },
-      { label: m.app.tr("Next week", "Na próxima semana"), action: function() { w.remind(conv, msg, U.minutesUntilNextWeek9()) } }
-    ] })
+    items.push({ label: m.app.tr("Remind me about this", "Lembrar-me disto"), icon: "󰀠", sub: m.remindItems(w, conv, msg) })
     if (msg.threadTs || msg.replyCount > 0) {
       var parent = msg.threadTs && msg.threadTs !== msg.ts ? (w.findAny(conv, msg.threadTs) || msg) : msg
       var on = !!parent.subscribed
@@ -479,15 +555,11 @@ Item {
     }
     items.push({ separator: true })
     items.push({ label: pinned ? m.app.tr("Unpin from conversation", "Desafixar da conversa") : m.app.tr("Pin to conversation", "Fixar na conversa"), icon: "󰐃", hint: "P", action: function() { w.togglePin(conv, msg) } })
-    items.push({ label: m.app.tr("Copy link", "Copiar link"), icon: "󰌷", hint: "L", action: function() { m.app.copy(w.permalink(conv, msg)); m.win.toast(m.app.tr("Link copied", "Link copiado")) } })
+    items.push({ label: m.app.tr("Copy link", "Copiar link"), icon: "󰌷", hint: "L", action: function() { m.copyLink(w, conv, msg) } })
     items.push({ label: m.app.tr("Copy message", "Copiar mensagem"), icon: "󰆏", action: function() { m.app.copy(Md.flat(msg, m.ctx, 0)); m.win.toast(m.app.tr("Message copied", "Mensagem copiada")) } })
     if (m.mine) {
       items.push({ separator: true })
-      items.push({ label: m.app.tr("Delete message…", "Excluir mensagem…"), icon: "󰧧", danger: true, hint: "Del", action: function() {
-        m.win.dialog("confirm", { title: m.app.tr("Delete message", "Excluir mensagem"),
-          text: m.app.tr("Are you sure you want to delete this message? This cannot be undone.", "Tem certeza de que quer excluir esta mensagem? Não dá para desfazer."),
-          confirm: m.app.tr("Delete", "Excluir"), danger: true, quote: Md.flat(msg, m.ctx, 300), action: function() { w.deleteMessage(conv, msg.ts) } })
-      } })
+      items.push({ label: m.app.tr("Delete message…", "Excluir mensagem…"), icon: "󰧧", danger: true, hint: "Del", action: function() { m.win.confirmDelete(conv, msg) } })
     }
     m.win.menu(items, x, y)
   }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
@@ -35,6 +36,7 @@ Rectangle {
   property bool broadcast: false
   property bool showFormatting: app.setting("composerToolbar", true) !== false
   property var files: []         // [{path, name, size, mime, preview}]
+  property Item messageList: null // the messages above: ↑ in the empty box selects them (MessageList)
   signal done()
 
   // The document, and what the editor shows of it.
@@ -49,6 +51,7 @@ Rectangle {
   property var redos: []
   property var _clip: null       // the last copy out of the box: {text, lines}
   property string _editBase: ""
+  property var _before: null     // editing: what had the keyboard before, which gets it back after
   property string _draftFor: ""
   property bool _rendering: false
   property bool _dirty: false
@@ -74,7 +77,10 @@ Rectangle {
   function setText(s) { box.load(RD.fromMarkup(s, box.dctx())) }
 
   Component.onCompleted: {
-    if (box.editing) { box.loadEdit(); Qt.callLater(function() { input.forceActiveFocus(); input.cursorPosition = input.length }) }
+    if (box.editing) {
+      box.loadEdit()
+      Qt.callLater(function() { var w = box.Window.window; box._before = w ? w.activeFocusItem : null; input.forceActiveFocus(); input.cursorPosition = input.length })
+    }
     else box.restoreDraft()
   }
   Component.onDestruction: box.saveDraftNow()
@@ -310,14 +316,30 @@ Rectangle {
     var typed = RD.toMarkup(d)
     var blocks = RD.toBlocks(d)
     if (box.editing) {
+      // Emptied, it's Slack's Delete message instead; Cancel leaves the box
+      // open, empty.
+      if (!typed.trim()) {
+        var m = box.ws.findAny(box.conv, box.editTs)
+        if (m) box.win.confirmDelete(box.conv, m, function() { box.finish() })
+        return
+      }
       if (JSON.stringify(blocks) !== box._editBase) box.ws.editMessage(box.conv, box.editTs, typed, blocks)
-      box.done()
+      box.finish()
       return
     }
     if (!typed.trim() && !box.files.length) return
     var ok = box.ws.send(box.conv, typed, { threadTs: box.threadTs, broadcast: box.broadcast, files: box.files, blocks: blocks })
     if (ok === false) return
     box.clearBox()
+  }
+
+  // The edit is over (saved, cancelled, deleted): the keyboard goes back
+  // where it was, a selected message or the message box.
+  function finish() {
+    var f = box._before
+    box._before = null
+    if (input.activeFocus) { try { if (f && f.visible) f.forceActiveFocus() } catch (e) {} }
+    box.done()
   }
 
   function clearBox() {
@@ -690,8 +712,12 @@ Rectangle {
             event.accepted = true
             return
           }
-          if (key === Qt.Key_Escape && box.editing) { box.done(); event.accepted = true; return }
-          if (key === Qt.Key_Up && !ctrl && !alt && !shift && RD.isEmpty(box.doc) && !box.editing) {
+          if (key === Qt.Key_Escape && box.editing) { box.finish(); event.accepted = true; return }
+          // ↑ in the empty box: the messages above take the keyboard, from
+          // the newest (Slack's message selection). Ctrl+↑ edits your last
+          // one, as ↑ does in a box with no list above (Threads).
+          if (key === Qt.Key_Up && !alt && !shift && RD.isEmpty(box.doc) && !box.editing) {
+            if (!ctrl && box.messageList) { if (box.messageList.selectLatest()) event.accepted = true; return }
             var last = box.ws.lastMine(box.conv, box.threadTs)
             if (last) { box.ws.editing = { conv: box.conv, ts: last.ts }; event.accepted = true }
             return
@@ -783,7 +809,7 @@ Rectangle {
         anchors.rightMargin: box.t.sp(8)
         anchors.verticalCenter: parent.verticalCenter
         spacing: box.t.sp(8)
-        SButton { app: box.app; small: true; text: box.app.tr("Cancel", "Cancelar"); onClicked: box.done() }
+        SButton { app: box.app; small: true; text: box.app.tr("Cancel", "Cancelar"); onClicked: box.finish() }
         SButton { app: box.app; small: true; kind: "primary"; text: box.app.tr("Save", "Salvar"); onClicked: box.submit() }
       }
       // Send, and Slack's "Schedule for later" beside it: one pill split by

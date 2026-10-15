@@ -74,13 +74,17 @@ Rectangle {
     conv: tp.conv
     threadTs: tp.ts
     intro: parentC
+    onLeave: box.focusInput()
   }
 
   Component {
     id: parentC
     Column {
+      // ↑ past the oldest reply selects the parent (MessageList.lead).
+      readonly property Item lead: parentItem
       width: list.width
       MessageItem {
+        id: parentItem
         visible: !!tp.parentMsg
         width: parent.width
         app: tp.app
@@ -90,6 +94,8 @@ Rectangle {
         inThread: true
         isParent: true
         ctx: list.ctx
+        selected: list.focusKey === "parent"
+        keyed: list.focusKey !== "" && list.keyed
         row: tp.parentMsg ? ({ key: "parent", kind: "msg", msg: tp.parentMsg, header: true, day: null, isNew: false, pinned: false }) : null
       }
       Item {
@@ -121,6 +127,7 @@ Rectangle {
     ws: tp.ws
     conv: tp.conv
     threadTs: tp.ts
+    messageList: list
     // Not in an archived channel, nor a deactivated account's archives.
     visible: !!tp.c && !tp.c.archived && tp.c.member !== false && !(tp.c.kind === "im" && (tp.c.userDeleted || !!(tp.ws.user(tp.c.user) || {}).deleted))
   }

@@ -61,16 +61,17 @@ DialogFrame {
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall
     }
-    // A newer one (core/Updater.qml): a click updates, as the button over your photo.
+    // A newer one (core/Updater.qml): a click opens the update in a
+    // terminal, as the button over your photo.
     Text {
       readonly property var up: d.app.updater
       readonly property bool busy: !!up && up.phase === "updating"
       visible: !!up && up.phase !== ""
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
-      text: !up ? "" : busy ? d.app.tr("Updating to ", "Atualizando para ") + up.latest + "…"
+      text: !up ? "" : busy ? d.app.tr("Updating to ", "Atualizando para ") + up.latest + d.app.tr(" in the terminal…", " no terminal…")
             : up.phase === "updated" ? d.app.tr("Version ", "Versão ") + up.latest + d.app.tr(" is installed · reload to use it", " instalada · recarregue para usar")
-            : d.app.tr("Version ", "Versão ") + up.latest + d.app.tr(" is available · update", " disponível · atualizar")
+            : d.app.tr("Version ", "Versão ") + up.latest + d.app.tr(" is available · update…", " disponível · atualizar…")
       color: busy ? d.t.fgDim : d.t.green
       font.family: d.t.font
       font.pixelSize: d.t.fsSmall

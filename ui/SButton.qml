@@ -2,6 +2,8 @@ import QtQuick
 import "../lib/Registry.js" as Reg
 
 // Slack's buttons: primary (filled), secondary (outlined), danger, ghost.
+// With the keyboard on it (a dialog's default) it wears Slack's focus ring,
+// and Enter or Space clicks it.
 Rectangle {
   id: b
   property var app: Reg.service
@@ -23,6 +25,20 @@ Rectangle {
   border.width: kind === "secondary" ? 1 : 0
   border.color: t.lineStrong
   opacity: enabled2 ? 1 : 0.45
+
+  Keys.onReturnPressed: if (b.enabled2) b.clicked()
+  Keys.onEnterPressed: if (b.enabled2) b.clicked()
+  Keys.onSpacePressed: if (b.enabled2) b.clicked()
+
+  Rectangle {
+    visible: b.activeFocus
+    anchors.fill: parent
+    anchors.margins: -b.t.sp(3)
+    radius: b.radius + b.t.sp(3)
+    color: "transparent"
+    border.width: Math.max(2, b.t.sp(2))
+    border.color: b.t.alpha(b.t.accent, 0.8)
+  }
 
   Row {
     id: row

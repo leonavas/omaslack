@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import qs.Commons
 import qs.Ui
 import "../lib/Emoji.js" as Emoji
@@ -8,23 +9,32 @@ import "../lib/Registry.js" as Reg
 // beside their row. Items: {label, icon, hint, action(), danger, checked,
 // enabled, sub: [items]}, {separator: true}, {header: "…"} (a group's
 // label), {title: "…"} (the menu's name, on top),
-// {reactions: ["white_check_mark", …], action(name)}.
+// {reactions: ["white_check_mark", …], action(name)}. Closed, the keyboard
+// goes back where it was.
 Item {
   id: menuLayer
   property var app: Reg.service
   readonly property var t: app.theme
   property var stack: []        // [{items, x, y, w}]
   property int hot: -1          // keyboard row in the last card
+  property var prevFocus: null
   readonly property bool shown: stack.length > 0
   visible: shown
   z: 900
 
   function open(items, x, y) {
+    if (!menuLayer.shown) { var w = menuLayer.Window.window; menuLayer.prevFocus = w ? w.activeFocusItem : null }
     menuLayer.stack = [{ items: items, x: x, y: y }]
     menuLayer.hot = -1
     menuLayer.forceActiveFocus()
   }
-  function close() { menuLayer.stack = []; menuLayer.hot = -1 }
+  function close() {
+    var f = menuLayer.prevFocus
+    menuLayer.prevFocus = null
+    menuLayer.stack = []
+    menuLayer.hot = -1
+    try { if (f && f !== menuLayer && f.visible) f.forceActiveFocus() } catch (e) {}
+  }
   function openSub(level, items, x, y) {
     var s = menuLayer.stack.slice(0, level + 1)
     s.push({ items: items, x: x, y: y })
