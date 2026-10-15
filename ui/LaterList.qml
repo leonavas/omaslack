@@ -9,7 +9,8 @@ import "../lib/Registry.js" as Reg
 
 // The rail's Later tab (in the sidebar's place): the messages saved for
 // later, newest saved first — where, who, what, when saved (and due) —
-// with Mark complete and Open on hover. A click opens the message.
+// with Mark complete and Open on hover. A click opens the message. `peek`:
+// the card hovering the rail's Later shows (AppWindow), in progress only.
 Rectangle {
   id: ll
   property var app: Reg.service
@@ -18,6 +19,7 @@ Rectangle {
   readonly property var t: app.theme
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   readonly property bool narrow: width < t.sp(150)
+  property bool peek: false
   property string tab: "progress"        // progress | archived
   property string selectedKey: ""
   color: t.sidebar
@@ -46,7 +48,7 @@ Rectangle {
       text: ll.app.tr("Later", "Depois")
       color: ll.t.fgBright
       font.family: ll.t.font
-      font.pixelSize: ll.t.fsHeader
+      font.pixelSize: ll.peek ? ll.t.fsText + 1 : ll.t.fsHeader
       font.bold: true
       elide: Text.ElideRight
     }
@@ -68,7 +70,7 @@ Rectangle {
   // In progress · Archived
   Item {
     id: tabs
-    visible: !ll.narrow
+    visible: !ll.narrow && !ll.peek
     y: header.height
     width: parent.width
     height: visible ? ll.t.sp(36) : 0
@@ -153,7 +155,7 @@ Rectangle {
       id: row
       required property var modelData
       // undefined: not asked yet; null: loading; false: gone; else the message.
-      readonly property var msg: { ll.ws.savedRev; return ll.ws.savedMsgs[modelData.key] }
+      readonly property var msg: { ll.ws.oneRev; return ll.ws.oneMsgs[modelData.key] }
       readonly property var c: ll.ws.conv(modelData.conv)
       readonly property bool selected: ll.selectedKey === modelData.key
       readonly property bool hot: ma.containsMouse || actHover.hovered
@@ -163,7 +165,7 @@ Rectangle {
       width: list.width
       height: ll.narrow ? ll.t.sp(52) : Math.max(ll.t.sp(60), body.implicitHeight + ll.t.sp(18))
 
-      Component.onCompleted: ll.ws.fetchSaved(modelData.conv, modelData.ts)
+      Component.onCompleted: ll.ws.fetchOne(modelData.conv, modelData.ts)
 
       Rectangle {
         x: ll.t.sp(8)
@@ -372,10 +374,13 @@ Rectangle {
     return ll.app.tr("Due ", "Para ") + U.shortStamp(String(unix), ll.app.lang, ll.app.clock24) + ll.app.tr(" at ", " às ") + at
   }
 
+  // From the card, to the tab first (which drops the card and this list).
   function openItem(item, msg) {
+    var w = ll.win, ws = ll.ws
     ll.selectedKey = item.key
-    if (msg && msg.threadTs && msg.threadTs !== msg.ts) ll.ws.open(item.conv, { ts: item.ts, threadTs: msg.threadTs })
-    else ll.ws.open(item.conv, { ts: item.ts })
+    if (ll.peek) w.railTab = "later"
+    if (msg && msg.threadTs && msg.threadTs !== msg.ts) ws.open(item.conv, { ts: item.ts, threadTs: msg.threadTs })
+    else ws.open(item.conv, { ts: item.ts })
   }
 
   function complete(item, msg) {

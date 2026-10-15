@@ -153,8 +153,9 @@ DialogFrame {
         text: d.app.tr("Show desktop notifications", "Mostrar notificações na área de trabalho")
         hint: d.app.tr("For direct messages, mentions and keywords, following each workspace's notification settings on Slack.",
                        "Para mensagens diretas, menções e palavras-chave, seguindo as configurações de notificação de cada workspace no Slack.")
-        checked: d.app.setting("notifications", true) !== false
-        onToggled: on => d.app.setSetting("notifications", on)
+        // The bar icon's setting too (its menu's "Desktop notifications").
+        checked: d.app.notificationsOn
+        onToggled: on => d.app.setNotifySetting("notifications", on)
       }
       Switch2 {
         app: d.app
@@ -172,8 +173,8 @@ DialogFrame {
         text: d.app.tr("Show message preview", "Mostrar prévia da mensagem")
         hint: d.app.tr("The text of the message in the notification. Off, it only says who wrote and where.",
                        "O texto da mensagem na notificação. Desligado, diz só quem escreveu e onde.")
-        checked: d.app.setting("notificationPreview", true) !== false
-        onToggled: on => d.app.setSetting("notificationPreview", on)
+        checked: d.app.previewOn
+        onToggled: on => d.app.setNotifySetting("notificationPreview", on)
       }
 
       Rectangle { width: parent.width; height: 1; color: d.t.line }

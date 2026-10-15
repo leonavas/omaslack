@@ -7,9 +7,12 @@ import "../lib/Model.js" as Model
 import "../lib/Mrkdwn.js" as Md
 import "../lib/Registry.js" as Reg
 
-// The rail's Activity tab (in the sidebar's place): mentions of you,
-// unread thread replies and reactions to your messages, newest first, with
-// All / Mentions / Threads / Reactions filters. A click opens the message.
+// The rail's Activity tab (in the sidebar's place), as Slack's own: its
+// activity.feed (DMs, mentions, thread replies, reactions to your messages,
+// apps, invitations), newest first and by day, with All / DMs / Mentions /
+// Threads and Unreads. The feed only points at messages; they come one by
+// one (Workspace.fetchOne). A click opens the message. `peek`: the card
+// hovering the rail's Activity shows (AppWindow), no tabs, its own Unreads.
 Rectangle {
   id: al
   property var app: Reg.service
@@ -18,142 +21,155 @@ Rectangle {
   readonly property var t: app.theme
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   readonly property bool narrow: width < t.sp(150)
-  property string filter: "all"          // all | mentions | threads | reactions
-  property string selectedKey: ""
+  property bool peek: false
+  property string filter: "all"          // all | dms | mentions | threads
+  readonly property string unreadsSetting: peek ? "activityPeekUnreads" : "activityUnreadsOnly"
+  property bool unreadsOnly: app.setting(unreadsSetting, false) === true
+  readonly property string selectedKey: win && !peek ? win.activityKey : ""
   color: t.sidebar
+  function toggleUnreads() { al.unreadsOnly = !al.unreadsOnly; al.app.setSetting(al.unreadsSetting, al.unreadsOnly) }
 
   // ---------------------------------------------------------------- data
-  // Mentions: Slack's search for <@me> (or @handle when that finds nothing).
-  property var hits: []
-  property bool mentionsLoading: false
-  property bool mentionsLoaded: false
-  property string mentionsError: ""
-  property int serial: 0
+  // What each tab asks for, as the web client does.
+  readonly property string mentionTypes: "at_user,at_user_group,at_channel,at_everyone,keyword,unjoined_channel_mention"
+  readonly property var typesOf: ({
+    all: mentionTypes + ",thread_v2,message_reaction,bot_dm_bundle,dm,internal_channel_invite,external_channel_invite",
+    dms: "dm",
+    mentions: mentionTypes,
+    threads: "thread_v2"
+  })
 
-  function loadMentions() {
-    if (!al.ws) return
-    var n = ++al.serial
-    al.mentionsLoading = true
-    al.mentionsError = ""
-    al.ws.searchMessages("<@" + al.ws.me.id + ">", "timestamp", 1, function(r) {
+  property var refs: []                  // [{key, type, when, unread, conv, ts, threadTs, by, reaction, count}]
+  property string cursor: ""
+  property int pages: 0
+  property bool loading: false
+  property bool loaded: false
+  property string error: ""
+  property int serial: 0
+  // Entries marked read or unread here (key → unread) until the feed says so.
+  property var marks: ({})
+  property int marksRev: 0
+
+  function load(more) {
+    if (!al.ws || (more && (!al.cursor || al.loading))) return
+    var n = more ? al.serial : ++al.serial
+    al.loading = true
+    al.ws.activityFeed(al.typesOf[al.filter], more ? al.cursor : "", al.unreadsOnly, function(r) {
       try { if (n !== al.serial) return } catch (e) { return }
-      if (!r.error && r.hits.length === 0 && al.ws.me.handle) {
-        al.ws.searchMessages("@" + al.ws.me.handle, "timestamp", 1, function(r2) {
-          try { if (n !== al.serial) return } catch (e) { return }
-          al.done(r2)
-        })
-        return
+      var got = r.items.map(al.refOf).filter(function(x) { return x })
+      if (more) {
+        var have = {}
+        al.refs.forEach(function(x) { have[x.key] = true })
+        got = al.refs.concat(got.filter(function(x) { return !have[x.key] }))
       }
-      al.done(r)
+      al.refs = got
+      if (!more) { al.marks = {}; al.marksRev++ }
+      al.cursor = r.cursor
+      al.pages = more ? al.pages + 1 : 1
+      al.error = r.error || ""
+      al.loading = false
+      al.loaded = true
+      got.forEach(function(x) { if (!al.ws.knownMessage(x.conv, x.ts)) al.ws.fetchOne(x.conv, x.ts, x.threadTs) })
     })
   }
-  function done(r) {
-    al.hits = r.hits || []
-    al.mentionsError = r.error || ""
-    al.mentionsLoading = false
-    al.mentionsLoaded = true
-  }
+  function reset() { al.serial++; al.refs = []; al.cursor = ""; al.pages = 0; al.loaded = false; al.error = ""; al.load(false) }
+  onFilterChanged: al.reset()
+  onUnreadsOnlyChanged: al.reset()
+  Component.onCompleted: al.load(false)
 
-  function refresh() { al.loadMentions(); if (al.ws) al.ws.loadThreads() }
-  Component.onCompleted: { al.refresh(); al.keepUnread() }
-
-  // Threads: the unread ones; a thread read while this list shows keeps its
-  // row (now read) until the tab is opened again.
-  property var kept: ({})
-  property int keptRev: 0
-  function keepUnread() {
-    if (!al.ws) return
-    var changed = false
-    al.ws.threadsView.list.forEach(function(c) { if (c.unread && !al.kept[c.key]) { al.kept[c.key] = true; changed = true } })
-    if (changed) al.keptRev++
-  }
+  // New messages and reads move the feed: the first page again, quietly,
+  // unless more pages are showing.
+  Timer { id: live; interval: 3000; onTriggered: if (!al.loading && al.pages <= 1) al.load(false) }
   Connections {
     target: al.ws
-    function onThreadsRevChanged() { al.keepUnread() }
+    function onCountsRevChanged() { live.restart() }
   }
 
-  // An app's picture as its message has it (Workspace.author); a person's comes from `user`.
-  function appIcon(m) { var a = al.ws.author(m); return a.app ? a.icon : "" }
-
-  function where(conv, fallbackName, fallbackKind) {
-    var c = al.ws.conv(conv)
-    var kind = c ? c.kind : fallbackKind
-    if (kind === "im") return { pre: al.app.tr(" in a direct message", " numa mensagem direta"), name: "" }
-    if (kind === "mpim") return { pre: al.app.tr(" in ", " em "), name: al.ws.convLabel(conv) || fallbackName || "" }
-    return { pre: al.app.tr(" in ", " em "), name: "#" + (al.ws.convLabel(conv) || fallbackName || conv) }
+  // One feed entry → where its message is and what it says about it.
+  function refOf(it) {
+    var i = it.item || {}, b = i.bundle_info || {}, p = b.payload || {}, m = i.message || {}
+    var r = { key: it.key, type: i.type, when: it.feed_ts, unread: !!it.is_unread, conv: m.channel || "", ts: m.ts || "",
+              threadTs: m.thread_ts || "", by: m.author_user_id || "", reaction: i.reaction || null, count: 0 }
+    if (i.type === "dm") {
+      // Its newest message from the other side (feed_ts), not the newest one.
+      r.conv = ((p.dm_entry || {}).latest_message || {}).channel || ""
+      r.ts = it.feed_ts
+    } else if (i.type === "thread_v2") {
+      var e = p.thread_entry || {}
+      r.conv = e.channel_id || ""; r.ts = e.latest_ts || ""; r.threadTs = e.thread_ts || ""; r.count = e.unread_msg_count || 0
+    } else if (i.type === "bot_dm_bundle") {
+      r.conv = (p.message || {}).channel || ""; r.ts = (p.message || {}).ts || ""; r.count = b.unread_count || 0
+    }
+    return r.conv && r.ts ? r : null
   }
 
-  readonly property var mentionItems: {
+  // undefined/null: not here yet; false: gone (deleted or out of reach).
+  function messageOf(r) {
+    var m = al.ws.knownMessage(r.conv, r.ts)
+    return m ? m : al.ws.oneMsgs[r.conv + "/" + r.ts]
+  }
+  function nameOf(uid) { return uid ? (al.ws.author({ user: uid }).name || "") : "" }
+
+  function rowOf(r, m) {
+    var ws = al.ws
+    var c = ws.conv(r.conv)
+    var kind = c ? c.kind : (r.conv.charAt(0) === "D" ? "im" : "channel")
+    var invite = r.type === "internal_channel_invite" || r.type === "external_channel_invite"
+    var threadTs = r.threadTs || (m && m.threadTs) || ""
+    var inThread = !!threadTs && threadTs !== r.ts
+    var user = "", who = "", icon = ""
+    if (r.type === "message_reaction") { user = r.reaction.user || ""; who = al.nameOf(user) }
+    else if (invite) { user = r.by || (m && m.inviter) || ""; who = al.nameOf(user) }
+    else if (m) { var a = ws.author(m); user = m.user || ""; who = a.name; icon = a.app ? a.icon : "" }
+    else { user = r.by; who = al.nameOf(r.by) }
+
+    var label = ws.convLabel(r.conv)
+    var place = kind === "im" ? al.app.tr("Direct message", "Mensagem direta") : label
+    var where = "", whereIcon = ""
+    if (r.type === "bot_dm_bundle") { where = al.app.tr("App", "App"); whereIcon = "󰚩" }
+    else if (invite) { where = al.app.tr("Invitation", "Convite"); whereIcon = kind === "private" ? "󰌾" : "#" }
+    else if (r.type === "thread_v2" || inThread) {
+      where = al.app.tr("Thread in ", "Conversa em ") + (kind === "channel" || kind === "private" ? "#" + label : place)
+      whereIcon = "󰍪"
+    } else { where = place; whereIcon = kind === "im" || kind === "mpim" ? "󰍥" : (kind === "private" ? "󰌾" : "#") }
+    if (r.count > 1) where += "  ·  " + r.count + al.app.tr(" new", " novas")
+
+    var text = invite ? al.app.tr("invited you to ", "convidou você para ") + "#" + (label || r.conv)
+             : (m ? Md.flat(m, al.ctx, 220) : "")
+    // Unread messages it stands for: a DM's, a thread's new replies, an app's.
+    var k = ws.counts[r.conv]
+    var news = r.type === "dm" ? (k ? Math.max(k.mentions || 0, k.unread ? 1 : 0) : 0) : r.count
+    return { key: r.key, type: r.type, conv: r.conv, ts: r.ts, threadTs: inThread ? threadTs : "", when: r.when, news: news,
+             unread: al.marks[r.key] !== undefined ? al.marks[r.key] : r.unread, user: user, who: who || "…", icon: icon, text: text,
+             where: where, whereIcon: whereIcon, emoji: r.reaction ? r.reaction.name : "" }
+  }
+
+  // Rows by day, the day's name over all but today's.
+  readonly property var items: {
     if (!ws) return []
-    ws.countsRev; ws.usersRev; ws.convsRev
-    return al.hits.map(function(h) {
-      var k = ws.counts[h.conv]
-      var clean = String(h.text || "").replace(/[]/g, "")
-      var msg = Model.parseMessage({ text: clean, attachments: h.attachments || [], files: h.files || [] })
-      return { key: "m/" + h.conv + "/" + h.ts, kind: "mention", conv: h.conv, ts: h.ts, threadTs: h.threadTs || "", user: h.user || "",
-               who: ws.author(h).name || h.username || "?", icon: al.appIcon(h), where: al.where(h.conv, h.convName, h.convKind),
-               text: Md.flat(msg, al.ctx, 220), when: h.ts,
-               unread: !h.threadTs && !!k && !!k.lastRead && U.cmpTs(h.ts, k.lastRead) > 0, extra: "" }
-    })
-  }
-
-  readonly property var threadItems: {
-    if (!ws) return []
-    ws.threadsRev; ws.usersRev; ws.convsRev; al.keptRev
-    var me = ws.me.id
-    var out = []
-    ws.threadsView.list.forEach(function(c) {
-      if (!c.unread && !al.kept[c.key]) return
-      var others = c.replies.filter(function(r) { return r.user !== me })
-      var last = others.length ? others[others.length - 1] : (c.replies.length ? c.replies[c.replies.length - 1] : c.root)
-      out.push({ key: "t/" + c.key, kind: "thread", conv: c.conv, ts: c.root.ts, threadTs: c.root.ts, user: last.user || "",
-                 who: ws.author(last).name || "?", icon: al.appIcon(last), where: al.where(c.conv, "", ""),
-                 text: Md.flat(last, al.ctx, 220), when: c.latest || last.ts, unread: c.unread,
-                 extra: c.unread && c.newCount > 1 ? (c.newCount + al.app.tr(" new replies", " novas respostas")) : "" })
+    ws.oneRev; ws.historyRev; ws.repliesRev; ws.lastRev; ws.previewRev; ws.usersRev; ws.convsRev; ws.botsRev; ws.countsRev; al.marksRev
+    var out = [], lastDay = "", now = new Date()
+    al.refs.forEach(function(r) {
+      var m = al.messageOf(r)
+      if (m === false) return
+      var d = U.tsDate(r.when), day = d.toDateString()
+      if (day !== lastDay) {
+        lastDay = day
+        if (U.dayDiff(d, now) !== 0) out.push({ key: "d/" + day, header: true, label: U.dayLabel(d, al.app.lang) })
+      }
+      out.push(al.rowOf(r, m || null))
     })
     return out
   }
+  readonly property int rowCount: items.filter(function(i) { return !i.header }).length
 
-  // Reactions by others to your messages, from what this app has loaded
-  // (conversations and threads opened), newest message first.
-  readonly property var reactionItems: {
-    if (!ws) return []
-    ws.historyRev; ws.repliesRev; ws.usersRev; ws.convsRev
-    var me = ws.me.id
-    var out = [], seen = {}
-    function scan(conv, msgs) {
-      for (var i = msgs.length - 1; i >= 0; i--) {
-        var m = msgs[i]
-        if (!m.reactions || !m.reactions.length || m.pending || !Model.isMine(m, me)) continue
-        m.reactions.forEach(function(r) {
-          var others = r.users.filter(function(u) { return u !== me })
-          var count = Math.max(others.length, (r.count || 0) - (r.users.indexOf(me) >= 0 ? 1 : 0))
-          if (count <= 0) return
-          var key = "r/" + conv + "/" + m.ts + "/" + r.name
-          if (seen[key]) return
-          seen[key] = true
-          var names = others.slice(0, 2).map(function(u) { return ws.userName(u) || "?" })
-          var rest = count - names.length
-          var who = !names.length ? count + al.app.tr(count === 1 ? " person" : " people", count === 1 ? " pessoa" : " pessoas")
-                  : (rest > 0 ? names.join(", ") + al.app.tr(" and " + rest + (rest === 1 ? " other" : " others"), " e mais " + rest) : Model.people(names, 0, al.app.lang))
-          out.push({ key: key, kind: "reaction", conv: conv, ts: m.ts, threadTs: m.threadTs && m.threadTs !== m.ts ? m.threadTs : "", user: others[0] || "",
-                     who: who, where: al.where(conv, "", ""), emoji: r.name, text: Md.flat(m, al.ctx, 220), when: m.ts, unread: false, extra: "" })
-        })
-      }
-    }
-    for (var conv in ws.histories) { var h = ws.histories[conv]; if (h && h.msgs) scan(conv, h.msgs) }
-    for (var k in ws.replies) { var r = ws.replies[k]; if (r && r.msgs) scan(k.split("/")[0], r.msgs) }
-    out.sort(function(a, b) { return U.cmpTs(b.when, a.when) })
-    return out.slice(0, 100)
-  }
-
-  readonly property var items: {
-    if (al.filter === "mentions") return al.mentionItems
-    if (al.filter === "threads") return al.threadItems
-    if (al.filter === "reactions") return al.reactionItems
-    var all = al.mentionItems.concat(al.threadItems, al.reactionItems)
-    all.sort(function(a, b) { return U.cmpTs(b.when, a.when) })
-    return all
+  // "45 mins", "3 hours", then "Yesterday", "Mon", "Oct 3".
+  function ago(ts) {
+    var d = U.tsDate(ts), secs = Math.max(0, (Date.now() - d) / 1000), pt = al.app.lang === "pt-BR"
+    if (secs < 60) return al.app.tr("just now", "agora")
+    if (secs < 3600) { var mins = Math.floor(secs / 60); return mins + (pt ? " min" : (mins === 1 ? " min" : " mins")) }
+    if (U.dayDiff(d, new Date()) === 0) { var h = Math.floor(secs / 3600); return h + (pt ? " h" : (h === 1 ? " hour" : " hours")) }
+    return U.shortStamp(ts, al.app.lang, al.app.clock24)
   }
 
   // ---------------------------------------------------------------- header
@@ -165,16 +181,27 @@ Rectangle {
       visible: !al.narrow
       x: al.t.sp(16)
       anchors.verticalCenter: parent.verticalCenter
-      width: parent.width - x - refreshBtn.width - al.t.sp(20)
+      width: parent.width - x - (al.peek ? peekUnreads.width : refreshBtn.width) - al.t.sp(20)
       text: al.app.tr("Activity", "Atividade")
       color: al.t.fgBright
       font.family: al.t.font
-      font.pixelSize: al.t.fsHeader
+      font.pixelSize: al.peek ? al.t.fsText + 1 : al.t.fsHeader
       font.bold: true
       elide: Text.ElideRight
     }
+    UnreadsSwitch {
+      id: peekUnreads
+      app: al.app
+      visible: al.peek
+      anchors.right: parent.right
+      anchors.rightMargin: al.t.sp(14)
+      anchors.verticalCenter: parent.verticalCenter
+      checked: al.unreadsOnly
+      onToggled: al.toggleUnreads()
+    }
     IconButton {
       id: refreshBtn
+      visible: !al.peek
       app: al.app
       anchors.right: parent.right
       anchors.rightMargin: al.narrow ? (parent.width - width) / 2 : al.t.sp(10)
@@ -184,17 +211,17 @@ Rectangle {
       tip: al.app.tr("Refresh", "Atualizar")
       color: al.t.fgBright
       hoverColor: al.t.hoverStrong
-      onClicked: al.refresh()
+      onClicked: al.load(false)
     }
   }
 
-  // All · Mentions · Threads · Reactions. When they don't fit, the ones
-  // not chosen fold to their icon.
+  // All · DMs · Mentions · Threads. When they don't fit, the ones not
+  // chosen fold to their icon.
   readonly property var tabList: [
     { id: "all", icon: "󰂚", label: al.app.tr("All", "Tudo") },
+    { id: "dms", icon: "󰍥", label: "DMs" },
     { id: "mentions", icon: "󰁥", label: al.app.tr("Mentions", "Menções") },
-    { id: "threads", icon: "󰍪", label: al.app.tr("Threads", "Conversas") },
-    { id: "reactions", icon: "󰇵", label: al.app.tr("Reactions", "Reações") }
+    { id: "threads", icon: "󰍪", label: al.app.tr("Threads", "Conversas") }
   ]
   Row {
     id: measure
@@ -209,7 +236,7 @@ Rectangle {
 
   Flickable {
     id: tabs
-    visible: !al.narrow
+    visible: !al.narrow && !al.peek
     y: header.height
     width: parent.width
     height: visible ? al.t.sp(36) : 0
@@ -230,8 +257,7 @@ Rectangle {
           required property var modelData
           readonly property bool active: al.filter === modelData.id
           readonly property bool folded: al.compactTabs && !active
-          readonly property int count: modelData.id === "threads" ? al.threadItems.filter(function(i) { return i.unread }).length
-                                     : (modelData.id === "mentions" ? al.mentionItems.filter(function(i) { return i.unread }).length : 0)
+          readonly property bool news: !!al.ws && al.ws.activityUnread(modelData.id === "all" ? null : al.typesOf[modelData.id].split(",")) > 0
           height: tabRow.height
           width: tabInner.implicitWidth + al.t.sp(16)
           Rectangle {
@@ -264,12 +290,12 @@ Rectangle {
               font.bold: tab.active
               anchors.verticalCenter: parent.verticalCenter
             }
-            Badge {
-              app: al.app
+            // Something unread there.
+            Rectangle {
+              visible: tab.news
+              width: al.t.sp(6); height: width; radius: width / 2
+              color: al.t.badge
               anchors.verticalCenter: parent.verticalCenter
-              visible: tab.count > 0
-              count: tab.count
-              implicitHeight: al.t.sp(16)
             }
           }
           Rectangle {
@@ -287,7 +313,7 @@ Rectangle {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
-              if (al.filter === tab.modelData.id && tab.modelData.id === "mentions") al.loadMentions()
+              if (al.filter === tab.modelData.id) al.load(false)
               al.filter = tab.modelData.id
               list.positionViewAtBeginning()
             }
@@ -300,55 +326,133 @@ Rectangle {
 
   Rectangle { y: tabs.y + tabs.height; width: parent.width; height: 1; color: al.t.line }
 
+  // Unreads.
+  Item {
+    id: tools
+    visible: !al.narrow && !al.peek
+    y: tabs.y + tabs.height + 1
+    width: parent.width
+    height: visible ? al.t.sp(44) : 0
+    Rectangle {
+      id: unreadChip
+      x: al.t.sp(12)
+      anchors.verticalCenter: parent.verticalCenter
+      height: al.t.sp(30)
+      width: chipRow.implicitWidth + al.t.sp(16)
+      radius: height / 2
+      color: al.unreadsOnly ? al.t.accent : (chipMa.containsMouse ? al.t.hover : "transparent")
+      border.width: al.unreadsOnly ? 0 : 1
+      border.color: al.t.lineStrong
+      Row {
+        id: chipRow
+        anchors.centerIn: parent
+        spacing: al.t.sp(5)
+        Glyph { app: al.app; icon: al.unreadsOnly ? "󰄬" : "󰇮"; size: al.t.fsSmall; color: al.unreadsOnly ? al.t.selectedText : al.t.fgSoft; anchors.verticalCenter: parent.verticalCenter }
+        Text {
+          text: al.app.tr("Unreads", "Não lidas")
+          color: al.unreadsOnly ? al.t.selectedText : al.t.fg
+          font.family: al.t.font
+          font.pixelSize: al.t.fsSmall
+          font.bold: true
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
+      MouseArea {
+        id: chipMa
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: al.toggleUnreads()
+      }
+      PanelToolTip { visible: chipMa.containsMouse; text: al.app.tr("Show only unread activity", "Mostrar só atividade não lida") }
+    }
+  }
+
   // ---------------------------------------------------------------- rows
   ListView {
     id: list
-    y: tabs.y + tabs.height + 1
+    y: tools.y + tools.height
     width: parent.width
     height: parent.height - y
     clip: true
-    topMargin: al.t.sp(6)
+    topMargin: al.t.sp(2)
     bottomMargin: al.t.sp(12)
-    spacing: al.t.sp(2)
     boundsBehavior: Flickable.StopAtBounds
     reuseItems: false
     model: ScriptModel { values: al.items; objectProp: "key" }
     ScrollBar.vertical: ThinScroll { app: al.app }
+    onAtYEndChanged: if (atYEnd && al.loaded) al.load(true)
+
+    footer: Item {
+      width: list.width
+      height: al.loading && al.loaded && al.pages > 0 && al.cursor ? al.t.sp(36) : 0
+      Text {
+        visible: parent.height > 0
+        anchors.centerIn: parent
+        text: al.app.tr("Loading…", "Carregando…")
+        color: al.t.fgDim
+        font.family: al.t.font
+        font.pixelSize: al.t.fsSmall
+      }
+    }
 
     delegate: Item {
       id: row
       required property var modelData
+      readonly property bool head: !!modelData.header
       readonly property bool selected: al.selectedKey === modelData.key
       readonly property bool hot: ma.containsMouse
       readonly property color ink: selected ? al.t.rowSelectedText : (modelData.unread ? al.t.fgBright : al.t.fg)
       readonly property color soft: selected ? al.t.alpha(al.t.rowSelectedText, 0.78) : al.t.fgDim
       // The row's fill, and the color it makes over the list: the corner
       // badge's ring matches it on every state.
-      readonly property color fill: selected ? al.t.rowSelected : (ma.pressed ? al.t.hoverStrong : (hot ? al.t.hover
-           : (modelData.unread ? al.t.alpha(al.t.blue, 0.08) : "transparent")))
+      readonly property color fill: selected ? al.t.rowSelected : (ma.pressed ? al.t.hoverStrong : (hot ? al.t.hover : "transparent"))
       readonly property color under: Qt.tint(al.t.sidebar, fill)
       width: list.width
-      height: al.narrow ? al.t.sp(52) : Math.max(al.t.sp(60), body.implicitHeight + al.t.sp(18))
+      height: head ? (al.narrow ? 0 : al.t.sp(36)) : (al.narrow ? al.t.sp(52) : Math.max(al.t.sp(64), body.implicitHeight + al.t.sp(20)))
+
+      // A day.
+      Rectangle {
+        visible: row.head && !al.narrow
+        y: al.t.sp(6)
+        width: parent.width
+        height: 1
+        color: al.t.line
+      }
+      Text {
+        visible: row.head && !al.narrow
+        x: al.t.sp(16)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: al.t.sp(4)
+        text: row.modelData.label || ""
+        color: al.t.fgBright
+        font.family: al.t.font
+        font.pixelSize: al.t.fsSmall + 1
+        font.bold: true
+      }
 
       Rectangle {
+        visible: !row.head
         x: al.t.sp(8)
         width: parent.width - al.t.sp(16)
-        height: parent.height
+        height: parent.height - al.t.sp(2)
+        y: 1
         radius: Math.max(6, al.t.radiusSmall)
         color: row.fill
       }
       // Unread: a dot at the edge.
       Rectangle {
-        visible: row.modelData.unread && !row.selected && !al.narrow
+        visible: !row.head && row.modelData.unread && !row.selected && !al.narrow
         x: al.t.sp(12) - width / 2 + al.t.sp(2)
-        y: al.t.sp(16)
+        y: al.t.sp(18)
         width: al.t.sp(6); height: width; radius: width / 2
         color: al.t.blue
       }
 
-      // The person, with what happened on the corner.
+      // Who, with the reaction on the corner.
       Item {
         id: lead
+        visible: !row.head
         x: al.narrow ? (row.width - width) / 2 : al.t.sp(20)
         y: al.narrow ? (row.height - height) / 2 : al.t.sp(10)
         width: al.t.sp(36)
@@ -357,31 +461,23 @@ Rectangle {
           anchors.fill: parent
           app: al.app
           ws: al.ws
-          user: row.modelData.user
+          user: row.modelData.user || ""
           url: row.modelData.icon || ""
-          name: row.modelData.user ? "" : row.modelData.who
+          name: row.modelData.user ? "" : (row.modelData.who || "")
           size: parent.width
           onClicked: al.openItem(row.modelData)
         }
         Rectangle {
+          visible: !!row.modelData.emoji
           anchors.right: parent.right
           anchors.bottom: parent.bottom
           anchors.rightMargin: -al.t.sp(5)
           anchors.bottomMargin: -al.t.sp(5)
           width: al.t.sp(20); height: width; radius: width / 2
-          color: row.modelData.kind === "reaction" ? al.t.popup : (row.modelData.kind === "mention" ? al.t.badge : al.t.blue)
+          color: al.t.popup
           border.width: 2
           border.color: row.under
-          Glyph {
-            visible: row.modelData.kind !== "reaction"
-            app: al.app
-            anchors.centerIn: parent
-            icon: row.modelData.kind === "mention" ? "󰁥" : "󰍪"
-            size: al.t.fsTiny
-            color: al.t.onColor(parent.color)
-          }
           EmojiIcon {
-            visible: row.modelData.kind === "reaction"
             app: al.app
             ws: al.ws
             anchors.centerIn: parent
@@ -393,49 +489,88 @@ Rectangle {
 
       Column {
         id: body
-        visible: !al.narrow
+        visible: !al.narrow && !row.head
         anchors.left: lead.right
         anchors.leftMargin: al.t.sp(12)
         anchors.right: parent.right
-        anchors.rightMargin: al.t.sp(18)
+        anchors.rightMargin: al.t.sp(16) + (newsBadge.visible ? newsBadge.width + al.t.sp(10) : 0)
         y: al.t.sp(9)
         spacing: al.t.sp(3)
 
-        Text {
+        // Name · when
+        Item {
           width: parent.width
-          text: al.titleOf(row.modelData)
-          textFormat: Text.StyledText
-          color: row.ink
-          font.family: al.t.font
-          font.pixelSize: al.t.fsSmall + 1
-          wrapMode: Text.Wrap
-          maximumLineCount: 2
-          elide: Text.ElideRight
+          height: whoText.implicitHeight
+          Text {
+            id: whoText
+            width: Math.min(implicitWidth, parent.width - whenText.implicitWidth - al.t.sp(8))
+            text: row.modelData.who || ""
+            color: row.ink
+            font.family: al.t.font
+            font.pixelSize: al.t.fsSmall + 1
+            font.bold: true
+            elide: Text.ElideRight
+          }
+          Text {
+            id: whenText
+            x: whoText.width + al.t.sp(8)
+            y: whoText.baselineOffset - baselineOffset
+            text: row.head ? "" : al.ago(row.modelData.when)
+            color: row.soft
+            font.family: al.t.font
+            font.pixelSize: al.t.fsTiny
+          }
         }
         Text {
           width: parent.width
           visible: text !== ""
-          text: row.modelData.text
+          text: row.modelData.text || ""
           textFormat: Text.PlainText
-          color: row.selected ? al.t.rowSelectedText : (row.modelData.unread ? al.t.fg : al.t.alpha(al.t.fg, 0.75))
+          color: row.selected ? al.t.rowSelectedText : (row.modelData.unread ? al.t.fgBright : al.t.fg)
           font.family: al.t.font
-          font.pixelSize: al.t.fsSmall
+          font.pixelSize: al.t.fsSmall + 1
+          font.bold: !!row.modelData.unread
           wrapMode: Text.Wrap
-          maximumLineCount: 2
+          maximumLineCount: 3
           elide: Text.ElideRight
         }
-        Text {
+        // Where: Direct message · Thread in #eng · App · Invitation.
+        Row {
           width: parent.width
-          text: U.relative(row.modelData.when, al.app.lang, al.app.clock24) + (row.modelData.extra ? "  ·  " + row.modelData.extra : "")
-          color: row.soft
-          font.family: al.t.font
-          font.pixelSize: al.t.fsTiny
-          elide: Text.ElideRight
+          spacing: al.t.sp(5)
+          Glyph {
+            app: al.app
+            icon: row.modelData.whereIcon || ""
+            size: al.t.fsTiny
+            color: row.soft
+            anchors.verticalCenter: parent.verticalCenter
+          }
+          Text {
+            width: parent.width - al.t.sp(20)
+            text: row.modelData.where || ""
+            color: row.soft
+            font.family: al.t.font
+            font.pixelSize: al.t.fsTiny
+            elide: Text.ElideRight
+            anchors.verticalCenter: parent.verticalCenter
+          }
         }
+      }
+
+      // How many unread messages it stands for.
+      Badge {
+        id: newsBadge
+        app: al.app
+        visible: !row.head && !al.narrow && !!row.modelData.unread && row.modelData.news > 0
+        count: row.modelData.news || 0
+        anchors.right: parent.right
+        anchors.rightMargin: al.t.sp(20)
+        y: al.t.sp(12)
       }
 
       MouseArea {
         id: ma
+        visible: !row.head
         anchors.fill: parent
         hoverEnabled: true
         z: -1
@@ -446,22 +581,22 @@ Rectangle {
           al.openItem(row.modelData)
         }
       }
-      PanelToolTip { visible: ma.containsMouse && al.narrow; text: row.modelData.who + ": " + row.modelData.text }
+      PanelToolTip { visible: ma.containsMouse && al.narrow && !row.head; text: (row.modelData.who || "") + ": " + (row.modelData.text || "") }
     }
   }
 
   // ---------------------------------------------------------------- empty
   Column {
-    visible: al.items.length === 0 && !al.narrow
+    visible: al.rowCount === 0 && !al.narrow
     anchors.horizontalCenter: parent.horizontalCenter
     y: list.y + al.t.sp(48)
     width: parent.width - al.t.sp(40)
     spacing: al.t.sp(8)
-    readonly property bool loading: (al.filter === "mentions" || al.filter === "all") && al.mentionsLoading && !al.mentionsLoaded
+    readonly property bool waiting: !al.loaded || (al.loading && al.refs.length === 0) || (al.refs.length > 0 && al.items.length === 0 && al.loading)
     Glyph {
       app: al.app
       anchors.horizontalCenter: parent.horizontalCenter
-      icon: al.filter === "mentions" ? "󰁥" : (al.filter === "threads" ? "󰍪" : (al.filter === "reactions" ? "󰇵" : "󰂚"))
+      icon: al.filter === "mentions" ? "󰁥" : (al.filter === "threads" ? "󰍪" : (al.filter === "dms" ? "󰍥" : "󰂚"))
       size: al.t.sp(30)
       color: al.t.fgDim
     }
@@ -469,26 +604,27 @@ Rectangle {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.Wrap
-      text: parent.loading ? al.app.tr("Loading…", "Carregando…")
-          : (al.filter === "mentions" && al.mentionsError ? al.mentionsError
+      text: parent.waiting ? al.app.tr("Loading…", "Carregando…")
+          : (al.error ? al.error
+          : (al.unreadsOnly ? al.app.tr("You're all caught up", "Você está em dia")
           : (al.filter === "mentions" ? al.app.tr("No mentions yet", "Nenhuma menção ainda")
-          : (al.filter === "threads" ? al.app.tr("No unread threads", "Nenhuma conversa não lida")
-          : (al.filter === "reactions" ? al.app.tr("No reactions yet", "Nenhuma reação ainda")
-          : al.app.tr("You're all caught up", "Você está em dia")))))
+          : (al.filter === "threads" ? al.app.tr("No thread activity", "Nenhuma atividade em conversas")
+          : (al.filter === "dms" ? al.app.tr("No direct messages", "Nenhuma mensagem direta")
+          : al.app.tr("No activity yet", "Nenhuma atividade ainda"))))))
       color: al.t.fgBright
       font.family: al.t.font
       font.pixelSize: al.t.fsText
       font.bold: true
     }
     Text {
-      visible: !parent.loading
+      visible: !parent.waiting && !al.error
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.Wrap
       text: al.filter === "mentions" ? al.app.tr("When someone @mentions you, it shows up here.", "Quando alguém @mencionar você, aparece aqui.")
           : (al.filter === "threads" ? al.app.tr("New replies in threads you follow show up here.", "Novas respostas nas conversas que você segue aparecem aqui.")
-          : (al.filter === "reactions" ? al.app.tr("Reactions to your messages in the conversations you open show up here.", "Reações às suas mensagens nas conversas que você abre aparecem aqui.")
-          : al.app.tr("Mentions, thread replies and reactions to your messages show up here.", "Menções, respostas em conversas e reações às suas mensagens aparecem aqui.")))
+          : (al.filter === "dms" ? al.app.tr("Messages sent to you show up here.", "Mensagens enviadas para você aparecem aqui.")
+          : al.app.tr("Mentions, DMs, thread replies and reactions to your messages show up here.", "Menções, DMs, respostas em conversas e reações às suas mensagens aparecem aqui.")))
       color: al.t.fgDim
       font.family: al.t.font
       font.pixelSize: al.t.fsSmall
@@ -496,21 +632,22 @@ Rectangle {
   }
 
   // ---------------------------------------------------------------- actions
-  // "<b>Ana</b> mentioned you in <b>#eng</b>"
-  function titleOf(it) {
-    var b = function(s) { return "<b>" + U.escapeHtml(s) + "</b>" }
-    var w = it.where
-    var place = w.pre + (w.name ? b(w.name) : "")
-    if (it.kind === "mention") return b(it.who) + al.app.tr(" mentioned you", " mencionou você") + place
-    if (it.kind === "thread") return b(it.who) + al.app.tr(" replied to a thread", " respondeu a uma conversa") + place
-    return b(it.who) + al.app.tr(" reacted to your message", " reagiu à sua mensagem") + place
+  function mark(it, read) {
+    al.ws.markActivity(it, read)
+    al.marks[it.key] = !read
+    al.marksRev++
   }
 
+  // From the card, to the tab first (which drops the card, and this list
+  // with it: only what's held here is used after).
   function openItem(it) {
-    al.selectedKey = it.key
-    if (it.kind === "thread") { al.ws.open(it.conv, { ts: it.ts, threadTs: it.ts }); return }
-    if (it.threadTs && it.threadTs !== it.ts) al.ws.open(it.conv, { ts: it.ts, threadTs: it.threadTs })
-    else al.ws.open(it.conv, { ts: it.ts })
+    var w = al.win, ws = al.ws
+    if (it.unread) al.mark(it, true)
+    if (al.peek) w.railTab = "activity"
+    w.activityOpen = true
+    w.activityKey = it.key
+    if (it.threadTs) ws.open(it.conv, { ts: it.ts, threadTs: it.threadTs })
+    else ws.open(it.conv, { ts: it.ts })
   }
 
   function rowMenu(it, x, y) {
@@ -518,11 +655,9 @@ Rectangle {
     var items = [
       { label: al.app.tr("Open", "Abrir"), icon: "󰁔", action: function() { al.openItem(it) } }
     ]
-    if (it.threadTs || it.kind === "thread") items.push({ label: al.app.tr("Open thread", "Abrir conversa"), icon: "󰍪", action: function() { al.selectedKey = it.key; w.openThread(it.conv, it.threadTs || it.ts) } })
-    if (it.kind === "thread" && it.unread) items.push({ label: al.app.tr("Mark as read", "Marcar como lida"), icon: "󰄬", action: function() {
-      var c = w.threadsView.list.filter(function(x) { return "t/" + x.key === it.key })[0]
-      if (c) w.markThread(c.conv, c.root.ts, c.latest || c.root.ts)
-    } })
+    if (it.threadTs) items.push({ label: al.app.tr("Open thread", "Abrir conversa"), icon: "󰍪", action: function() { al.openItem(it); w.openThread(it.conv, it.threadTs) } })
+    if (it.unread) items.push({ label: al.app.tr("Mark as read", "Marcar como lida"), icon: "󰄬", action: function() { al.mark(it, true) } })
+    else items.push({ label: al.app.tr("Mark as unread", "Marcar como não lida"), icon: "󰇮", action: function() { al.mark(it, false) } })
     items.push({ separator: true })
     items.push({ label: al.app.tr("Copy link", "Copiar link"), icon: "󰌷", action: function() {
       al.app.copy(w.permalink(it.conv, { ts: it.ts, threadTs: it.threadTs })); al.win.toast(al.app.tr("Link copied", "Link copiado")) } })

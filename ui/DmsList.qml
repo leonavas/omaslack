@@ -19,7 +19,10 @@ Rectangle {
   readonly property var t: app.theme
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   readonly property bool narrow: width < t.sp(150)
-  property bool unreadsOnly: app.setting("dmsUnreadsOnly", false) === true
+  // The card hovering the rail's DMs shows (AppWindow): no search, its own Unreads.
+  property bool peek: false
+  readonly property string unreadsSetting: peek ? "dmsPeekUnreads" : "dmsUnreadsOnly"
+  property bool unreadsOnly: app.setting(unreadsSetting, false) === true
   property string query: ""
   color: t.sidebar
 
@@ -56,16 +59,27 @@ Rectangle {
       visible: !dl.narrow
       x: dl.t.sp(16)
       anchors.verticalCenter: parent.verticalCenter
-      width: parent.width - x - compose.width - dl.t.sp(20)
+      width: parent.width - x - (dl.peek ? peekUnreads.width : compose.width) - dl.t.sp(20)
       text: dl.app.tr("Direct messages", "Mensagens diretas")
       color: dl.t.fgBright
       font.family: dl.t.font
-      font.pixelSize: dl.t.fsHeader
+      font.pixelSize: dl.peek ? dl.t.fsText + 1 : dl.t.fsHeader
       font.bold: true
       elide: Text.ElideRight
     }
+    UnreadsSwitch {
+      id: peekUnreads
+      app: dl.app
+      visible: dl.peek
+      anchors.right: parent.right
+      anchors.rightMargin: dl.t.sp(14)
+      anchors.verticalCenter: parent.verticalCenter
+      checked: dl.unreadsOnly
+      onToggled: dl.toggleUnreads()
+    }
     IconButton {
       id: compose
+      visible: !dl.peek
       app: dl.app
       anchors.right: parent.right
       anchors.rightMargin: dl.narrow ? (parent.width - width) / 2 : dl.t.sp(10)
@@ -82,7 +96,7 @@ Rectangle {
   // Find a DM · Unreads.
   Item {
     id: tools
-    visible: !dl.narrow
+    visible: !dl.narrow && !dl.peek
     y: header.height
     width: parent.width
     height: visible ? dl.t.sp(44) : 0
@@ -131,7 +145,7 @@ Rectangle {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: { dl.unreadsOnly = !dl.unreadsOnly; dl.app.setSetting("dmsUnreadsOnly", dl.unreadsOnly) }
+        onClicked: dl.toggleUnreads()
       }
       PanelToolTip { visible: chipMa.containsMouse; text: dl.app.tr("Show only unread messages", "Mostrar só mensagens não lidas") }
     }
@@ -195,7 +209,7 @@ Rectangle {
           size: parent.width
           showPresence: true
           ring: row.under
-          onClicked: dl.ws.open(row.modelData.id)
+          onClicked: dl.openDm(row.modelData.id)
         }
         // A group: two photos, one over the other.
         Item {
@@ -305,7 +319,7 @@ Rectangle {
         onClicked: mouse => {
           if (mouse.button === Qt.RightButton) { var p = ma.mapToItem(dl.win.contentItem, mouse.x, mouse.y); dl.rowMenu(row.modelData, p.x, p.y); return }
           if (mouse.button === Qt.MiddleButton) { dl.ws.markRead(row.modelData.id); return }
-          dl.ws.open(row.modelData.id)
+          dl.openDm(row.modelData.id)
         }
       }
       PanelToolTip { visible: ma.containsMouse && dl.narrow; text: row.modelData.label }
@@ -345,6 +359,14 @@ Rectangle {
   }
 
   // "You: …", "Ana: …" (groups), or the last message as is.
+  function toggleUnreads() { dl.unreadsOnly = !dl.unreadsOnly; dl.app.setSetting(dl.unreadsSetting, dl.unreadsOnly) }
+  // From the card, to the tab first (which drops the card and this list).
+  function openDm(id) {
+    var w = dl.win, ws = dl.ws
+    if (dl.peek) w.railTab = "dms"
+    ws.open(id)
+  }
+
   function previewOf(r, m) {
     if (!m) return ""
     var text = Md.flat(m, dl.ctx, 160)

@@ -6,9 +6,9 @@ import "../lib/Registry.js" as Reg
 
 // The rail on the far left: the workspaces (stacked like Slack's, only the
 // one you're in, or all of them, Preferences → Sidebar), Slack's tabs (Home,
-// DMs, Activity, Later, More), the "+", pausing notifications and your photo
-// with your status. Everything sits on one center line, in squares of one
-// size (`tile`).
+// DMs, Activity, Files, Later, More), the "+", pausing notifications and
+// your photo with your status. Everything sits on one center line, in
+// squares of one size (`tile`).
 Item {
   id: rail
   property var app: Reg.service
@@ -141,20 +141,48 @@ Item {
 
     Rectangle { visible: !rail.stacked && rail.many; width: rail.t.sp(28); height: 1; color: rail.t.alpha(rail.t.fgBright, 0.18); anchors.horizontalCenter: parent.horizontalCenter }
 
-    RailTab { app: rail.app; icon: "󰋜"; label: rail.app.tr("Home", "Início"); active: rail.win.railTab === "home"; onClicked: rail.win.railTab = "home" }
+    // Badges as Slack's: Home the channel mentions (a dot for unread
+    // channels), DMs the conversations waiting, Activity its unread entries.
+    // Hovering DMs, Activity, Files or Later peeks at the list
+    // (AppWindow.peekHover).
     RailTab {
-      app: rail.app; icon: "󰠢"; label: "DMs"; active: rail.win.railTab === "dms"
-      dot: !!rail.ws && rail.ws.attention.dms > 0
-      onClicked: rail.win.railTab = rail.win.railTab === "dms" ? "home" : "dms"
-    }
-    RailTab {
-      app: rail.app; icon: "󰂚"; label: rail.app.tr("Activity", "Atividade"); active: rail.win.railTab === "activity"
+      app: rail.app; icon: "󰋜"; label: rail.app.tr("Home", "Início"); active: rail.win.railTab === "home"
       count: rail.ws ? rail.ws.attention.mentions : 0
-      onClicked: rail.win.railTab = rail.win.railTab === "activity" ? "home" : "activity"
+      // Unread channels only: red while you're on Home, a quiet dot from
+      // the other tabs, as Slack's.
+      dot: !!rail.ws && rail.ws.attention.channels > 0
+      dotColor: active ? rail.t.badge : Qt.tint(rail.t.frame, rail.t.alpha(rail.t.fgBright, 0.6))
+      onClicked: rail.win.railTab = "home"
     }
     RailTab {
+      id: dmsTab
+      app: rail.app; icon: "󰠢"; label: "DMs"; active: rail.win.railTab === "dms"
+      count: rail.ws ? rail.ws.attention.dmConvs : 0
+      onClicked: rail.win.railTab = rail.win.railTab === "dms" ? "home" : "dms"
+      onHoveredChanged: rail.win.peekHover("dms", dmsTab, hovered)
+    }
+    RailTab {
+      id: activityTab
+      app: rail.app; icon: "󰂚"; label: rail.app.tr("Activity", "Atividade"); active: rail.win.railTab === "activity"
+      count: rail.ws ? rail.ws.activityUnread() : 0
+      // Open with a message beside it: back to the whole list first.
+      onClicked: {
+        if (rail.win.railTab === "activity" && rail.win.activityOpen) rail.win.activityOpen = false
+        else rail.win.railTab = rail.win.railTab === "activity" ? "home" : "activity"
+      }
+      onHoveredChanged: rail.win.peekHover("activity", activityTab, hovered)
+    }
+    RailTab {
+      id: filesTab
+      app: rail.app; icon: "󰈢"; label: rail.app.tr("Files", "Arquivos"); active: rail.win.railTab === "files"
+      onClicked: rail.win.railTab = rail.win.railTab === "files" ? "home" : "files"
+      onHoveredChanged: rail.win.peekHover("files", filesTab, hovered)
+    }
+    RailTab {
+      id: laterTab
       app: rail.app; icon: "󰃀"; label: rail.app.tr("Later", "Depois"); active: rail.win.railTab === "later"
       onClicked: rail.win.railTab = rail.win.railTab === "later" ? "home" : "later"
+      onHoveredChanged: rail.win.peekHover("later", laterTab, hovered)
     }
     RailTab {
       id: moreTab

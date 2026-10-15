@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "leonavas.omaslack",
   "name": "Slack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "leonavas",
   "license": "Apache-2.0",
   "description": "A whole Slack client inside the Omarchy shell: sign in with Slack's own page, sidebar sections, channels, DMs, threads, reactions, search, statuses, pauses and several workspaces, drawn in the theme's colors. The bar icon opens it and badges what is waiting.",
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Slack",
-    "description": "Slack in the shell: click to open or hide the window, red badge for direct messages and mentions, a preview of what is unread on hover.",
+    "description": "Slack in the shell: click to open or hide the window, red and blue badges for DMs and channels, a preview of what is unread on hover, desktop notifications for new messages, pauses.",
     "category": "Status",
     "aliases": [
       "slack",
@@ -48,10 +48,13 @@
       "middleClickCloses": true,
       "hoverPreview": true,
       "previewRows": 6,
+      "previewMessages": 3,
       "previewChannels": false,
       "showReactions": true,
       "showThreads": true,
       "channelMentionsOnly": false,
+      "notifications": true,
+      "notificationText": true,
       "mutedIndicator": "Bell"
     },
     "schema": [
@@ -116,7 +119,7 @@
           "Combined"
         ],
         "defaultValue": "Split",
-        "description": "Split shows DMs (red, bottom-right) and channels (blue, top-right) as two badges. Combined shows one red badge, bottom-right, with their sum. The icon's menu toggles this as \"Group notifications\"."
+        "description": "Split shows DMs (red, bottom-right) and channels (blue, top-right) as two badges. Combined shows one badge, bottom-right, with their sum: red while a DM waits, blue when only channels do. The icon's menu toggles this as \"Group notifications\"."
       },
       {
         "key": "dmColor",
@@ -130,7 +133,7 @@
         "type": "string",
         "label": "Channel badge color",
         "defaultValue": "#467996",
-        "description": "Top-right badge: channel messages. Empty follows the theme's urgent color."
+        "description": "Top-right badge: channel messages. Empty uses the DM color."
       },
       {
         "key": "channelBadge",
@@ -235,6 +238,16 @@
         "defaultValue": 6
       },
       {
+        "key": "previewMessages",
+        "type": "integer",
+        "label": "Messages shown per conversation",
+        "min": 1,
+        "max": 5,
+        "step": 1,
+        "defaultValue": 3,
+        "description": "The newest unread messages of each conversation in the preview, up to 5."
+      },
+      {
         "key": "previewChannels",
         "type": "boolean",
         "label": "Preview every unread channel",
@@ -261,6 +274,20 @@
         "label": "Show threads you follow",
         "defaultValue": true,
         "description": "Lists the threads you follow with new replies in the preview. Replies that mention you add to the red badge, the other new replies to the blue one (not with the channel badge set to Mentions or None). The icon's menu toggles this as \"Show threads\"."
+      },
+      {
+        "key": "notifications",
+        "type": "boolean",
+        "label": "Desktop notifications",
+        "defaultValue": true,
+        "description": "A notification for each new message that notifies you in Slack (DMs, mentions, channels set to every message, replies in threads you follow) and each reaction to your messages, except while notifications are paused and for the conversation you have open on screen. A click opens the conversation at that message. The icon's menu toggles this as \"Desktop notifications\", and so does Slack's Preferences."
+      },
+      {
+        "key": "notificationText",
+        "type": "boolean",
+        "label": "Show the message in notifications",
+        "defaultValue": true,
+        "description": "Off, notifications say who wrote and where, but not what. Slack's Preferences toggles this as \"Show message preview\"."
       },
       {
         "key": "mutedIndicator",

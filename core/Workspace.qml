@@ -53,6 +53,10 @@ Item {
   property var sections: []
   property var stars: ({})
   property var openIms: null
+  // The DMs with deactivated accounts (users.conversations' is_user_deleted):
+  // out of the lists, as in Slack, but their archives open from search.
+  // person id → the conversation, until one is opened (then in `convs`).
+  property var goneDms: ({})
   property int sectionsRev: 0
   property var prefs: ({})
   property string globalNotify: "everything"
@@ -111,7 +115,7 @@ Item {
   readonly property var attention: {
     root.countsRev; root.convsRev
     return Model.attention({ counts: root.counts, convs: root.convs, users: root.users, prefs: root.prefs,
-                             globalNotify: root.globalNotify, threads: root.threads })
+                             threads: root.threads })
   }
 
   readonly property var sidebarRows: {
@@ -133,8 +137,7 @@ Item {
       var k = root.counts[id], c = root.convs[id]
       if (!c || c.archived || !(k.unread || k.mentions > 0)) continue
       var dm = Model.isDm(c)
-      var p = root.prefs[id] || {}
-      if (!dm && !(k.mentions > 0) && (p.muted || ["mentions", "mentions_dms", "nothing"].indexOf(p.desktop || root.globalNotify) >= 0)) continue
+      if (!dm && !(k.mentions > 0) && Model.quietPref(root.prefs[id])) continue
       out.push({ conv: id, label: root.convLabel(id), kind: c.kind, user: c.user || "", mentions: dm ? Math.max(1, k.mentions || 0) : (k.mentions || 0),
                  latest: k.latest || "", msg: root.lastMsgs[id] || null })
     }
@@ -183,7 +186,7 @@ Item {
     "users.channelSections.list", "stars.list", "users.priority.list", "client.counts", "client.userBoot", "client.getWebSocketURL",
     "rtm.connect", "emoji.list", "commands.list", "users.prefs.get", "dnd.info", "dnd.teamInfo", "saved.list", "conversations.history",
     "conversations.replies", "conversations.info", "conversations.members", "conversations.list", "pins.list", "reactions.get",
-    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get"]
+    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files"]
 
   function api(method, params, ok, fail) {
     if (root.readOnlyMode && root.readMethods.indexOf(method) < 0) {
@@ -192,7 +195,7 @@ Item {
       return
     }
     if (root.account.demo) {
-      var answer = Demo.respond(method, params || {}, root.me.id || "U0ME")
+      var answer = Demo.respond(method, params || {}, root.me.id || "U0ME", root.account.teamId)
       Qt.callLater(function() {
         if (answer && answer.ok) { if (ok) ok(answer) }
         else if (fail) fail(answer ? answer.error : "demo")
@@ -296,6 +299,8 @@ Item {
     return ["mentions", "mentions_dms", "nothing"].indexOf(d) >= 0 ? "mentions" : "all"
   }
   function isMuted(conv) { root.convsRev; var c = root.convs[conv]; return !Model.isDm(c) && !!(root.prefs[conv] && root.prefs[conv].muted) }
+  // Out of the badges and the bar's rows (Model.quietPref); DMs never are.
+  function isQuiet(conv) { root.convsRev; var c = root.convs[conv]; return !Model.isDm(c) && Model.quietPref(root.prefs[conv]) }
   function typingIn(conv) {
     root.typingRev
     var t = root.typing[conv] || {}
@@ -481,12 +486,13 @@ Item {
   }
 
   function loadConversations(after) {
-    var seen = {}
+    var seen = {}, gone = {}
     root.paginate("users.conversations", { types: "public_channel,private_channel,mpim,im", exclude_archived: false, limit: 200 }, "channels", function() {
       for (var id in root.convs) {
         var c = root.convs[id]
         if (!seen[id] && c.member !== false && !c.guest) delete root.convs[id]
       }
+      root.goneDms = gone
       root.convsRev++
       root.booted = true
       if (!root.current && root.view === "conv") root.openDefault()
@@ -495,11 +501,13 @@ Item {
     }, function() {}, function(items) {
       for (var i = 0; i < items.length; i++) {
         var c = items[i]
-        if (c.is_user_deleted) continue
-        seen[c.id] = true
         var o = Model.parseConv(c, root.convs[c.id])
         o.member = true
         o.guest = false
+        // A deactivated account's DM stays aside, unless it's the one open.
+        if (c.is_user_deleted && o.user) gone[o.user] = o
+        if (c.is_user_deleted && c.id !== root.current) continue
+        seen[c.id] = true
         root.convs[c.id] = o
       }
       root.convsRev++
@@ -522,11 +530,22 @@ Item {
       root.sectionsRev++
       cacheTimer.restart()
     }, function() {})
+    root.loadStars()
+  }
+
+  // Starred conversations (the sidebar's Starred) and starred files (the
+  // rail's Files): one list.
+  function loadStars() {
     root.paginate("stars.list", { limit: 200 }, "items", function(items) {
-      var st = {}
-      items.forEach(function(i) { if (["im", "mpim", "channel", "group"].indexOf(i.type) >= 0 && i.channel) st[i.channel] = true })
+      var st = {}, fs = {}
+      items.forEach(function(i) {
+        if (["im", "mpim", "channel", "group"].indexOf(i.type) >= 0 && i.channel) st[i.channel] = true
+        else if (i.type === "file" && i.file && i.file.id) fs[i.file.id] = Model.parseListedFile(i.file)
+      })
       root.stars = st
+      root.fileStars = fs
       root.sectionsRev++
+      root.fileStarsRev++
     }, function() {})
   }
 
@@ -554,10 +573,21 @@ Item {
       if (cur && root.focused && root.view === "conv" && out[cur]) { out[cur].unread = false; out[cur].mentions = 0 }
       var prevThreads = root.threads
       root.counts = out
+      root.activityCounts = b.activity_v2 || {}
       root.threads = { unread: b.threads ? b.threads.has_unreads === true : false, mentions: b.threads ? (b.threads.mention_count || 0) : 0 }
       root.countsRev++
       if (prevThreads.unread !== root.threads.unread || prevThreads.mentions !== root.threads.mentions) threadsSoon.restart()
     }, function() {})
+  }
+
+  // Unread Activity entries by type (client.counts' activity_v2): what
+  // Slack badges the Activity tab (and its tabs) with.
+  property var activityCounts: ({})
+  function activityUnread(types) {
+    root.countsRev
+    var n = 0
+    for (var k in root.activityCounts) if (!types || types.indexOf(k) >= 0) n += root.activityCounts[k] || 0
+    return n
   }
 
   function adoptUnknown(id) {
@@ -697,6 +727,8 @@ Item {
 
   function connectSocket() {
     if (wire.socketOpen) return
+    // The demo's pretend socket is always up (lib/Demo.js, playDemo).
+    if (root.account.demo) { root.onSocketUp(); return }
     var tokenIsSession = !!root.account.cookie
     function viaRtm() {
       root.api("rtm.connect", {}, function(b) { if (b.url) wire.openSocket(b.url) }, function() { reconnect.restartWith() })
@@ -740,6 +772,27 @@ Item {
   }
 
   function socketSend(obj) { wire.sendSocket(obj) }
+
+  // Demo only: what its pretend socket would say ("reaction": people
+  // reacting to one of your messages, "message": a new DM), heard as the
+  // real one's events are, one at a time, a beat apart.
+  property var _demoQueue: []
+  Timer {
+    id: demoBeat
+    interval: 420
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      var e = root._demoQueue.shift()
+      if (e) root.onEvent(e)
+      if (root._demoQueue.length === 0) stop()
+    }
+  }
+  function playDemo(kind) {
+    if (!root.account.demo) return
+    root._demoQueue = root._demoQueue.concat(Demo.events(kind, root.account.teamId, root.me.id || "U0ME"))
+    if (!demoBeat.running && root._demoQueue.length > 0) demoBeat.start()
+  }
 
   // Who we want presence for: DM partners in the sidebar, and ourselves.
   property string _presenceKey: ""
@@ -960,13 +1013,44 @@ Item {
     if (item.type !== "message" || !item.channel) return
     var added = e.type === "reaction_added"
     root.replaceEverywhere(item.channel, item.ts, function(old) {
-      return Model.patch(old, { reactions: root.toggledReactions(old.reactions, e.reaction, e.user, added) })
+      return Model.patch(old, { reactions: root.toggledReactions(old.reactions || [], e.reaction, e.user, added) })
     })
-    root.noteReaction(e, added)
-    // Paused, a reaction keeps quiet like a message does.
-    if (added && e.item_user === root.me.id && e.user !== root.me.id && !root.dnd) {
-      root.notify({ kind: "reaction", conv: item.channel, ts: item.ts, user: e.user, reaction: e.reaction, team: root.teamId })
-    }
+    if (!added) { root.noteReaction(e, false, null); return }
+    // Someone else's, on a message of yours: the bar lists it (and floats
+    // it out of the icon), and it notifies.
+    if (!e.user || e.user === root.me.id) return
+    root.ifMine(item.channel, item.ts, e.item_user, function(m) {
+      root.noteReaction(e, true, m)
+      root.maybeNotifyReaction(e, m)
+    })
+  }
+
+  // cb(message or null) when the message `ts` is yours. The socket names
+  // its author (`item_user`); without it, the message at hand does, or
+  // Slack is asked (reactions.get).
+  function ifMine(conv, ts, author, cb) {
+    var m = root.knownMessage(conv, ts)
+    if (author) { if (author === root.me.id) cb(m); return }
+    if (m) { if (m.user === root.me.id) cb(m); return }
+    root.api("reactions.get", { channel: conv, timestamp: ts }, function(b) {
+      var got = b.message ? Model.parseMessage(b.message) : null
+      if (got && got.user === root.me.id) cb(got)
+    }, function() {})
+  }
+
+  // A reaction notifies as a message there would: not while paused, not
+  // for the conversation (or thread) in front of you, not in a muted
+  // channel or one set to nothing.
+  function maybeNotifyReaction(e, m) {
+    if (!root.app || !root.app.notificationsOn || root.dnd) return
+    var chan = e.item.channel
+    var threadTs = m && m.threadTs && m.threadTs !== m.ts ? m.threadTs : ""
+    var reading = (chan === root.current && root.view === "conv" && root.focused) ||
+                  (threadTs && root.thread && root.thread.conv === chan && root.thread.ts === threadTs && root.focused)
+    if (reading || root.isMuted(chan)) return
+    if (((root.prefs[chan] || {}).desktop || root.globalNotify) === "nothing") return
+    root.notify({ kind: "reaction", conv: chan, ts: e.item.ts, threadTs: threadTs, user: e.user, reaction: e.reaction,
+                  msg: m || null, team: root.teamId })
   }
 
   function toggledReactions(list, name, uid, add) {
@@ -1199,7 +1283,13 @@ Item {
     if (!root.convs[convId]) {
       var d = root.directory.chans.filter(function(x) { return x.id === convId })[0]
       var other = root._others[convId]
-      if (d || other) {
+      // A deactivated account's DM (a search hit, a link): its archives.
+      var gone = null
+      for (var gu in root.goneDms) if (root.goneDms[gu].id === convId) gone = root.goneDms[gu]
+      if (gone) {
+        root.convs[convId] = gone
+        root.convsRev++
+      } else if (d || other) {
         root.convs[convId] = other ? Model.patch(other, { guest: true, member: false }) : { id: convId, kind: "channel", name: d.name, archived: d.archived, guest: true, member: false, updated: d.updated }
         root.convsRev++
       } else {
@@ -1881,6 +1971,116 @@ Item {
     root.fetchFile(url, f.name, function(path) { if (path) Quickshell.execDetached(["xdg-open", path]); else root.say(root.tr("Couldn't open the file", "Não abriu o arquivo")) })
   }
 
+  // ---------------------------------------------------------------- files
+  // The rail's Files: the files you can see, newest first, a page at a time
+  // (files.list: the web client's own Files hub, with its "recently
+  // viewed", runs on internal methods this session can't count on), every
+  // one or only yours (`who`: all | mine), and the ones you starred.
+  property var fileLists: ({})        // who → {files, page, pages, total, loading, loaded, error, at}
+  property int fileListsRev: 0
+  property var fileStars: ({})        // file id → the file (Model.parseListedFile), starred
+  property int fileStarsRev: 0
+  function fileList(who) { root.fileListsRev; return root.fileLists[who] || null }
+  function isFileStarred(id) { root.fileStarsRev; return !!root.fileStars[id] }
+
+  // The first page again (`fresh`, or nothing yet), else the next one.
+  function loadFiles(who, fresh) {
+    var cur = root.fileLists[who]
+    if (cur && cur.loading) return
+    if (!fresh && cur && cur.loaded && cur.page >= cur.pages) return
+    var page = fresh || !cur || !cur.loaded ? 1 : cur.page + 1
+    var p = { count: 100, page: page }
+    if (who === "mine") p.user = root.me.id
+    root.fileLists[who] = Object.assign({ files: [], page: 0, pages: 0, total: 0, loaded: false, error: "", at: 0 }, cur || {}, { loading: true })
+    root.fileListsRev++
+    root.api("files.list", p, function(b) {
+      var before = page === 1 ? [] : (root.fileLists[who].files || [])
+      var have = {}
+      before.forEach(function(f) { have[f.id] = true })
+      var got = (b.files || []).filter(function(f) {
+        return f && f.id && !have[f.id] && f.mode !== "tombstone" && f.mode !== "hidden_by_limit"
+      }).map(Model.parseListedFile)
+      var paging = b.paging || {}
+      root.fileLists[who] = { files: before.concat(got), page: page, pages: paging.pages || page, total: paging.total || 0,
+                              loading: false, loaded: true, error: "", at: Date.now() }
+      root.fileListsRev++
+    }, function(err) {
+      root.fileLists[who] = Object.assign({}, root.fileLists[who], { loading: false, loaded: true, error: root.errorText(err) })
+      root.fileListsRev++
+    })
+  }
+  // A view showing the list: fetched again once it's a minute old.
+  function refreshFiles(who) {
+    var cur = root.fileLists[who]
+    if (!cur || (!cur.loading && (!cur.loaded || Date.now() - cur.at > 60000))) root.loadFiles(who, true)
+  }
+
+  // The Files page's search box: search.files, newest first, a page at a
+  // time, every file or only yours (`who`: all | mine, as `from:` asks).
+  // One search at a time: the answer to an older one is dropped. A word
+  // typed halfway finds nothing as it is: asked again as a prefix ("budg*").
+  property var fileSearch: ({ key: "" })  // {key, words, files, page, pages, total, loading, loaded, error, at}
+  property int fileSearchRev: 0
+  // The search for `query` (and `who`) while it's the one asked, else null.
+  function fileSearchOf(query, who) {
+    root.fileSearchRev
+    return root.fileSearch.key === who + "\n" + query ? root.fileSearch : null
+  }
+  // The first page (again when it's a minute old, or `fresh`), or the `next` one.
+  function searchFiles(query, who, next, fresh) {
+    var q = String(query || "").trim()
+    if (!q) return
+    var key = who + "\n" + q, cur = root.fileSearch, same = cur.key === key
+    if (same && cur.loading) return
+    if (next && (!same || !cur.loaded || cur.error || cur.page >= cur.pages)) return
+    if (!next && same && cur.loaded && !cur.error && !fresh && Date.now() - cur.at < 60000) return
+    var page = next ? cur.page + 1 : 1
+    var last = q.split(/\s+/).pop()
+    var canStar = last.length >= 2 && !/[*":]/.test(last) && last.charAt(0) !== "-"
+    // Asked again, what was found stays in the meantime.
+    var state = Object.assign({ files: [], words: q, page: 0, pages: 0, total: 0, loaded: false, error: "", at: 0 },
+                              same ? cur : {}, { key: key, loading: true, error: "" })
+    root.fileSearch = state
+    root.fileSearchRev++
+    function ask(words) {
+      var p = { query: words + (who === "mine" ? " from:<@" + root.me.id + ">" : ""), sort: "timestamp", sort_dir: "desc", count: 50, page: page }
+      root.api("search.files", p, function(b) {
+        if (root.fileSearch !== state) return
+        var res = b.files || {}
+        if (page === 1 && !(res.matches || []).length && words === q && canStar) { ask(q + "*"); return }
+        var before = page === 1 ? [] : state.files
+        var have = {}
+        before.forEach(function(f) { have[f.id] = true })
+        var got = (res.matches || []).filter(function(f) {
+          if (!f || !f.id || have[f.id] || f.mode === "tombstone" || f.mode === "hidden_by_limit") return false
+          have[f.id] = true
+          return true
+        }).map(Model.parseListedFile)
+        var paging = res.paging || {}
+        root.fileSearch = { key: key, words: words, files: before.concat(got), page: page, pages: paging.pages || (res.pagination || {}).page_count || page,
+                            total: paging.total || res.total || 0, loading: false, loaded: true, error: "", at: Date.now() }
+        root.fileSearchRev++
+      }, function(err) {
+        if (root.fileSearch !== state) return
+        root.fileSearch = Object.assign({}, state, { loading: false, loaded: true, error: root.errorText(err) })
+        root.fileSearchRev++
+      })
+    }
+    ask(next ? cur.words : q)
+  }
+
+  function setFileStar(f, on) {
+    if (on) root.fileStars[f.id] = f
+    else delete root.fileStars[f.id]
+    root.fileStarsRev++
+    root.api(on ? "stars.add" : "stars.remove", { file: f.id }, null, function(err) {
+      if (on) delete root.fileStars[f.id]
+      else root.fileStars[f.id] = f
+      root.fileStarsRev++
+      root.say(root.errorText(err))
+    })
+  }
+
   // ---------------------------------------------------------------- message actions
   function permalink(conv, m) { return U.permalink(root.team.domain, conv, m.ts, m.threadTs) }
 
@@ -1950,10 +2150,27 @@ Item {
   }
 
   // ---------------------------------------------------------------- conversations
+  // The DM with someone, a deactivated account's too; "" while there's none.
+  function dmWith(uid) {
+    root.convsRev
+    for (var id in root.convs) { var c = root.convs[id]; if (c.kind === "im" && c.user === uid) return id }
+    var g = root.goneDms[uid]
+    return g ? g.id : ""
+  }
+
   function openDm(userIds, cb) {
     var mine = userIds.filter(function(u) { return u !== root.me.id })
     if (mine.length === 1) {
       for (var id in root.convs) { var c = root.convs[id]; if (c.kind === "im" && c.user === mine[0]) { if (cb) cb(id); else root.open(id); return } }
+      // A deactivated account's archives: Slack won't open a new DM with
+      // them, the one there was comes back to `convs` while it's open.
+      var gone = root.goneDms[mine[0]]
+      if (gone) {
+        root.convs[gone.id] = gone
+        root.convsRev++
+        if (cb) cb(gone.id); else root.open(gone.id)
+        return
+      }
     }
     if (mine.length === 0) {
       for (var sid in root.convs) { var sc = root.convs[sid]; if (sc.kind === "im" && sc.user === root.me.id) { if (cb) cb(sid); else root.open(sid); return } }
@@ -2366,21 +2583,43 @@ Item {
     }, function() { cb([]) })
   }
 
-  // Messages saved for later, fetched one by one as the Later view needs them.
-  property var savedMsgs: ({})
-  function fetchSaved(conv, ts) {
+  // Single messages, fetched one by one as Later and Activity need them:
+  // conv/ts → the message, null while asked, false when it can't be had.
+  // A reply comes from its thread (conversations.replies takes any ts in it).
+  property var oneMsgs: ({})
+  property int oneRev: 0
+  function fetchOne(conv, ts, threadTs) {
     var key = conv + "/" + ts
-    if (root.savedMsgs[key] !== undefined) return
-    root.savedMsgs[key] = null
+    if (root.oneMsgs[key] !== undefined) return
+    root.oneMsgs[key] = null
+    function got(m) { root.oneMsgs[key] = m ? Model.parseMessage(m) : false; root.oneRev++ }
+    function inThread(parent) {
+      root.api("conversations.replies", { channel: conv, ts: parent, oldest: ts, latest: ts, inclusive: true, limit: 2 }, function(b) {
+        got((b.messages || []).filter(function(x) { return x.ts === ts })[0])
+      }, function() { got(null) })
+    }
+    if (threadTs && threadTs !== ts) { inThread(threadTs); return }
     root.api("conversations.history", { channel: conv, latest: ts, inclusive: true, limit: 1 }, function(b) {
       var m = (b.messages || [])[0]
-      if (m && m.ts === ts) { root.savedMsgs[key] = Model.parseMessage(m); root.savedRev++; return }
-      root.api("conversations.replies", { channel: conv, ts: ts, limit: 1 }, function(b2) {
-        var r = (b2.messages || []).filter(function(x) { return x.ts === ts })[0]
-        root.savedMsgs[key] = r ? Model.parseMessage(r) : false
-        root.savedRev++
-      }, function() { root.savedMsgs[key] = false; root.savedRev++ })
-    }, function() { root.savedMsgs[key] = false; root.savedRev++ })
+      if (m && m.ts === ts) got(m)
+      else inThread(ts)
+    }, function() { got(null) })
+  }
+
+  // The Activity feed (activity.feed, the web client's own): one page of
+  // references to what happened, newest first; the messages come apart.
+  function activityFeed(types, cursor, unreadOnly, cb) {
+    var p = { types: types, mode: "chrono_v1", limit: 20, archive_only: false, unread_only: !!unreadOnly, priority_only: false, is_activity_inbox: true }
+    if (cursor) p.cursor = cursor
+    root.api("activity.feed", p, function(b) {
+      cb({ items: b.items || [], cursor: (b.response_metadata && b.response_metadata.next_cursor) || "" })
+    }, function(err) { cb({ items: [], cursor: "", error: root.errorText(err) }) })
+  }
+  // An entry read or unread again, as the web client marks it: {type, key, when}.
+  function markActivity(it, read) {
+    var e = { type: it.type, key: it.key, ts: it.when, feed_ts: it.when }
+    if (read) root.api("activity.markRead", e)
+    else root.api("activity.markUnread", { entries: [e] })
   }
 
   // ---------------------------------------------------------------- bar feed
@@ -2414,19 +2653,21 @@ Item {
   // and at most 20, as slick keeps them for its widget. One taken back
   // leaves, and so does every one in a conversation once it is read: open
   // in front of you, or unread before and not any more.
-  // [{conv, ts, name, user, at, msg, wasUnread}]
+  // [{conv, ts, name, user, at, msg, wasUnread}]. `added` comes only for
+  // someone else's reaction to a message of yours (onReactionEvent); `msg`
+  // is that message when it is at hand.
   property var reactionFeed: []
   property int reactionRev: 0
-  function noteReaction(e, added) {
+  function noteReaction(e, added, msg) {
     var item = e.item || {}
     var list = root.reactionFeed.filter(function(r) {
       return !(r.conv === item.channel && r.ts === item.ts && r.name === e.reaction && r.user === e.user)
     })
     var changed = list.length !== root.reactionFeed.length
-    if (added && e.item_user === root.me.id && e.user !== root.me.id) {
+    if (added) {
       var k = root.counts[item.channel]
       list.unshift({ conv: item.channel, ts: item.ts, name: e.reaction, user: e.user, at: Math.floor(Date.now() / 1000),
-                     msg: root.knownMessage(item.channel, item.ts), wasUnread: !!k && (k.unread || k.mentions > 0) })
+                     msg: msg || root.knownMessage(item.channel, item.ts), wasUnread: !!k && (k.unread || k.mentions > 0) })
       changed = true
     }
     if (!changed) return

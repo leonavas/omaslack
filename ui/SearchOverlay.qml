@@ -186,15 +186,18 @@ Item {
       convs.push({ id: d.id, ckind: "channel", label: d.name, p: s.prepOf("c" + d.id, d.name), archived: !!d.archived, outside: true, members: d.members || 0,
                    user: "", self: false, deleted: false, n: 0, updated: d.updated || 0, purpose: d.purpose || "" })
     }
+    // Deactivated accounts too, as Slack finds them: their DM (kept aside,
+    // Workspace.goneDms) opens as archives.
     var people = []
     for (var uid in w.users) {
       var u = w.users[uid]
-      if (!u || u.deleted || u.bot || uid === "USLACKBOT") continue
+      if (!u || u.bot || uid === "USLACKBOT") continue
       var ps = [s.prepOf("n" + uid, u.name || "")]
       if (u.real && u.real !== u.name) ps.push(s.prepOf("r" + uid, u.real))
       if (u.handle && u.handle !== u.name) ps.push(s.prepOf("h" + uid, u.handle))
+      var gone = dmOf[uid] ? null : w.goneDms[uid]
       people.push({ id: uid, name: u.name || "", real: u.real || "", handle: u.handle || "", title: u.title || "",
-                    ps: ps, dm: dmOf[uid] || "", self: uid === w.me.id })
+                    ps: ps, dm: dmOf[uid] || (gone ? gone.id : ""), updated: gone ? gone.updated || 0 : 0, self: uid === w.me.id, deleted: !!u.deleted })
     }
     s._convIdx = convs
     s._userIdx = people
@@ -236,7 +239,7 @@ Item {
       }
       return best
     }
-    function pushPerson(at, best) { var pe = pidx[at]; pout.push({ e: pe, tier: best, latest: pe.dm ? s.latestOf({ id: pe.dm, updated: 0 }) : 0, at: at }) }
+    function pushPerson(at, best) { var pe = pidx[at]; pout.push({ e: pe, tier: best, latest: pe.dm ? s.latestOf({ id: pe.dm, updated: pe.updated }) : 0, at: at }) }
     for (i = 0; i < pidx.length; i++) {
       tier = personTier(pidx[i], false)
       if (tier >= 0) pushPerson(i, tier)
@@ -265,6 +268,9 @@ Item {
 
     // People and group DMs: a person ahead of a group that matches as well
     // (most often through that person's name), you behind others who do.
+    // A deactivated account ranks like anyone (their DM's last word, as
+    // Slack's affinity puts them first when you talked lately), behind
+    // the active on a tie, so those never talked to wait at the end.
     pout = pout.concat(gout)
     pout.sort(function(a, b) {
       if (!!a.e.archived !== !!b.e.archived) return a.e.archived ? 1 : -1
@@ -273,6 +279,7 @@ Item {
       if (!!a.e.ckind !== !!b.e.ckind) return a.e.ckind ? 1 : -1
       if (a.e.self !== b.e.self) return a.e.self ? 1 : -1
       if (a.latest !== b.latest) return b.latest - a.latest
+      if (!!a.e.deleted !== !!b.e.deleted) return a.e.deleted ? 1 : -1
       if (a.tier !== b.tier) return a.tier - b.tier
       var la = (a.e.label || a.e.name).length, lb = (b.e.label || b.e.name).length
       if (la !== lb) return la - lb
@@ -521,6 +528,8 @@ Item {
       w.open(h.conv, h.threadTs ? { ts: h.threadTs, threadTs: h.threadTs } : { ts: h.ts })
       if (h.threadTs) w.flashTs = h.ts
     } else if (r.kind === "conv") w.open(r.id)
+    // A deactivated account: their DM's archives, or with none, their profile.
+    else if (r.kind === "person" && r.e.deleted && !w.dmWith(r.uid)) { w.profileUser = r.uid; w.thread = null }
     else if (r.kind === "person") w.openDm([r.uid])
     else if (r.kind === "more") { s.setTab(r.tab); return }
     else return
@@ -570,60 +579,15 @@ Item {
   }
 
   // ---------------------------------------------------------------- text
-  // Query words to mark in results (Slack misses accents: "cha" → "chá").
-  readonly property var marks: {
-    var words = s.query.split(/\s+/).filter(function(w) { return w && w.indexOf(":") < 0 && w.charAt(0) !== "-" })
-    return U.tokens(words.join(" ").replace(/\*/g, ""))
-  }
-
-  function wordChar(c) { return /[A-Za-z0-9]/.test(c) || (c >= "À" && U.isLetter(c)) }
-
-  // Wraps every word starting with a query token in Slack's highlight marks.
-  function addMarks(str, toks, prefixOnly) {
-    if (!toks.length) return str
-    var out = "", i = 0, n = str.length, inMark = false
-    while (i < n) {
-      var c = str.charAt(i)
-      if (c === "\ue000") { inMark = true; out += c; i++; continue }
-      if (c === "\ue001") { inMark = false; out += c; i++; continue }
-      if (!s.wordChar(c)) { out += c; i++; continue }
-      var j = i
-      while (j < n && s.wordChar(str.charAt(j))) j++
-      var w = str.slice(i, j)
-      if (!inMark) {
-        var f = U.fold(w)
-        for (var k = 0; k < toks.length; k++) {
-          if (f.indexOf(toks[k]) !== 0) continue
-          var cut = prefixOnly && f.length === w.length ? toks[k].length : w.length
-          w = "\ue000" + w.slice(0, cut) + "\ue001" + w.slice(cut)
-          break
-        }
-      }
-      out += w
-      i = j
-    }
-    return out
-  }
+  // Query words to mark in results (U.markTokens).
+  readonly property var marks: U.markTokens(s.query)
 
   function marked(plain) {
     return Md.highlight(U.escapeHtml(plain), s.t.html.meText, s.t.html.meBg)
   }
 
-  // The same for one-line names (styled text, which elides): bold, lit.
-  function markedStyled(plain) {
-    return U.escapeHtml(plain).replace(/\ue000/g, "<b><font color=\"" + s.t.html.meText + "\">").replace(/\ue001/g, "</font></b>")
-  }
-
-  // A name with what matched the query lit.
-  function nameHtml(label) {
-    if (!s.query) return U.escapeHtml(label)
-    var m = s.addMarks(label, s.marks, true)
-    if (m === label && s.marks.length === 1) {
-      var f = U.fold(label), at = f.indexOf(s.marks[0])
-      if (at >= 0 && f.length === label.length) m = label.slice(0, at) + "\ue000" + label.slice(at, at + s.marks[0].length) + "\ue001" + label.slice(at + s.marks[0].length)
-    }
-    return s.markedStyled(m)
-  }
+  // A name with what matched the query lit (styled text, which elides).
+  function nameHtml(label) { return U.nameHtml(label, s.marks, s.t.html.meText) }
 
   // A hit's text: one flowing line, matches lit, cut to start near the
   // first match when that sits far in.
@@ -635,7 +599,7 @@ Item {
       return "<" + inner.slice(0, bar).replace(/[\ue000\ue001]/g, "") + "|" + inner.slice(bar + 1) + ">"
     }).replace(/:[^\s:]*[\ue000\ue001][^\s:]*:/g, function(code) { return code.replace(/[\ue000\ue001]/g, "") })
     var flat = Md.flat({ text: text, blocks: [], files: (h.files || []).map(function(f) { return { name: f.name || f.title || "" } }), attachments: h.attachments || [], subtype: "" }, s.ctx, 0)
-    flat = s.addMarks(flat, s.marks)
+    flat = U.addMarks(flat, s.marks)
     var first = flat.indexOf("\ue000")
     if (first > 110) {
       var from = flat.lastIndexOf(" ", first - 40)
@@ -737,11 +701,8 @@ Item {
     }
   }
 
-  function dmOf(uid) {
-    s.ws.convsRev
-    for (var id in s.ws.convs) { var c = s.ws.convs[id]; if (c.kind === "im" && c.user === uid) return id }
-    return ""
-  }
+  // A deactivated account's too (their archives).
+  function dmOf(uid) { return s.ws.dmWith(uid) }
 
   // The messages to draw for a preview: live history when the store has
   // it, else what the preview fetched.
@@ -770,8 +731,8 @@ Item {
   BorderSurface {
     id: card
     readonly property int boxY: Math.max(s.t.sp(3), Math.round((s.topOffset - s.t.sp(28)) / 2) - s.t.sp(2))
-    width: Math.round(Math.min(s.width - s.t.sp(24), s.t.sp(1240), Math.max(s.t.sp(720), s.width * 0.62)))
-    height: Math.round(Math.min(s.height - y - s.t.sp(14), Math.max(s.t.sp(420), s.height * 0.8)))
+    width: Math.round(Math.min(s.width - s.t.sp(24), s.t.sp(1560), Math.max(s.t.sp(760), s.width * 0.78)))
+    height: Math.round(Math.min(s.height - y - s.t.sp(14), Math.max(s.t.sp(480), s.height * 0.9)))
     x: Math.round((s.width - width) / 2)
     y: boxY
     color: s.t.popup
@@ -1173,7 +1134,7 @@ Item {
             Item {
               id: pr
               readonly property var e: rowItem.r.e
-              readonly property var st: s.ws.statusOf(pr.e.id)
+              readonly property var st: pr.e.deleted ? null : s.ws.statusOf(pr.e.id)
               implicitHeight: s.t.sp(46)
               Avatar {
                 id: prAva
@@ -1232,7 +1193,7 @@ Item {
                 Text {
                   visible: text !== ""
                   width: parent.width
-                  text: pr.e.title || (pr.st ? pr.st.text : "")
+                  text: pr.e.deleted ? s.app.tr("Deactivated account", "Conta desativada") + (pr.e.title ? "  ·  " + pr.e.title : "") : (pr.e.title || (pr.st ? pr.st.text : ""))
                   color: s.t.fgDim
                   font.family: s.t.font
                   font.pixelSize: s.t.fsSmall
@@ -1822,13 +1783,15 @@ Item {
       id: pp
       readonly property string uid: s.selRow && s.selRow.kind === "person" ? s.selRow.uid : ""
       readonly property var u: pp.uid ? s.ws.user(pp.uid) : null
-      readonly property var st: pp.uid ? s.ws.statusOf(pp.uid) : null
+      // A deactivated account: no presence, status or clock; its DM's archives.
+      readonly property bool gone: !!pp.u && !!pp.u.deleted
+      readonly property var st: pp.uid && !pp.gone ? s.ws.statusOf(pp.uid) : null
       readonly property var pd: s.pv
       readonly property string dm: pp.uid ? s.dmOf(pp.uid) : ""
       readonly property var msgs: pp.dm ? s.previewMsgs(pp.dm, pp.pd) : []
       readonly property bool self: !!s.ws && pp.uid === s.ws.me.id
       readonly property string localTime: {
-        if (!pp.u || typeof pp.u.tzOffset !== "number") return ""
+        if (!pp.u || pp.gone || typeof pp.u.tzOffset !== "number") return ""
         var here = new Date()
         return U.time(new Date(here.getTime() + (pp.u.tzOffset + here.getTimezoneOffset() * 60) * 1000), s.app.clock24)
       }
@@ -1916,11 +1879,12 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   size: s.t.sp(10)
                   ring: "transparent"
-                  active: s.ws.isActive(pp.uid)
-                  paused: s.ws.isPaused(pp.uid)
+                  active: !pp.gone && s.ws.isActive(pp.uid)
+                  paused: !pp.gone && s.ws.isPaused(pp.uid)
                 }
                 Text {
-                  text: (s.ws.isActive(pp.uid) ? s.app.tr("Active", "Ativo") : s.app.tr("Away", "Ausente")) + (pp.localTime ? "  ·  " + pp.localTime + s.app.tr(" local time", " hora local") : "")
+                  text: pp.gone ? s.app.tr("Deactivated account", "Conta desativada")
+                        : (s.ws.isActive(pp.uid) ? s.app.tr("Active", "Ativo") : s.app.tr("Away", "Ausente")) + (pp.localTime ? "  ·  " + pp.localTime + s.app.tr(" local time", " hora local") : "")
                   color: s.t.fgSoft
                   font.family: s.t.font
                   font.pixelSize: s.t.fsSmall
@@ -1956,12 +1920,14 @@ Item {
             x: s.t.sp(20)
             spacing: s.t.sp(8)
             topPadding: s.t.sp(6)
+            // A deactivated account's DM opens as its archives (when there is one).
             SButton {
+              visible: !pp.gone || pp.dm !== ""
               app: s.app
               small: true
               kind: "primary"
-              icon: "󰍥"
-              text: s.app.tr("Message", "Mensagem")
+              icon: pp.gone ? "󰀼" : "󰍥"
+              text: pp.gone ? s.app.tr("View archives", "Ver arquivos") : s.app.tr("Message", "Mensagem")
               onClicked: s.openRow(s.selRow)
             }
             SButton {

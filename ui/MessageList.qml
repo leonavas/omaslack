@@ -21,19 +21,25 @@ Item {
 
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   property var rowCache: new Map()
-  onConvChanged: { root.rowCache = new Map(); root.stick = true; root.opened = false; Qt.callLater(root.settle) }
+  onConvChanged: { root.rowCache = new Map(); root.stick = true; root.opened = false; wheelOff.stop(); Qt.callLater(root.settle) }
 
   // Pinned to the newest message unless the reader scrolled up; on open,
   // the New line comes into view if there is one.
   property bool stick: true
   property bool opened: false
   property bool _auto: false
+  // The reader is scrolling (wheel, touchpad, drag, flick): never snap back under them.
+  readonly property bool scrolling: list.moving || list.dragging || list.flicking || wheelOff.running
+  // Pixels between the bottom of the view and the newest message (negative
+  // inside the bottom margin, which positionViewAtBeginning leaves out).
+  function fromNewest() { return list.originY + list.contentHeight - list.contentY - list.height }
+  function nearNewest() { return root.fromNewest() <= root.t.sp(8) }
   function settle() {
     if (!root.opened && root.rows.length > 0 && !root.loading) {
       root.opened = true
       if (root.rows.some(function(r) { return r.isNew })) { root.stick = false; root._auto = true; root.showNew(); root._auto = false; return }
     }
-    if (root.stick) { root._auto = true; list.positionViewAtBeginning(); root._auto = false }
+    if (root.stick && !root.scrolling) { root._auto = true; list.positionViewAtBeginning(); root._auto = false }
   }
   onRowsChanged: Qt.callLater(root.settle)
 
@@ -64,9 +70,12 @@ Item {
     reuseItems: false
     cacheBuffer: 1200
     topMargin: root.t.sp(8)
-    bottomMargin: root.t.sp(root.inThread ? 12 : 22)
     model: ScriptModel { values: root.rows; objectProp: "key" }
     ScrollBar.vertical: ThinScroll { app: root.app }
+
+    // Visually below the newest message: the room above the message box.
+    // A margin would do, but positionViewAtBeginning() hides it here.
+    header: Item { width: list.width; height: root.t.sp(root.inThread ? 12 : 22) }
 
     delegate: MessageItem {
       required property var modelData
@@ -101,19 +110,21 @@ Item {
 
     // Pictures and unfurls grow after loading: stay on the newest message.
     onContentHeightChanged: if (root.stick && !root.inThread) Qt.callLater(root.settle)
+    // Any scroll away from the newest message lets go of it; back down there holds it again.
     onContentYChanged: {
       root.maybeLoad()
-      if (!root._auto && (list.moving || list.flicking || list.dragging || wheelSeen.active)) root.stick = !root.scrolledUp
+      if (!root._auto && root.scrolling) root.stick = root.nearNewest()
     }
-    onMovementEnded: root.stick = !root.scrolledUp
+    onMovementEnded: root.stick = root.nearNewest()
+    // Only notices the wheel / touchpad: a blocking handler would take the
+    // event from the list, which then doesn't scroll at all.
     WheelHandler {
-      id: wheelSeen
-      property bool active: false
       acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-      onWheel: { active = true; wheelOff.restart() }
+      blocking: false
       target: null
+      onWheel: wheelOff.restart()
     }
-    Timer { id: wheelOff; interval: 400; onTriggered: { wheelSeen.active = false; root.stick = !root.scrolledUp } }
+    Timer { id: wheelOff; interval: 400; onTriggered: root.stick = root.nearNewest() }
     onHeightChanged: root.maybeLoad()
   }
 

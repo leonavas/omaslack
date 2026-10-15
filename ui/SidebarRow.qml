@@ -222,7 +222,7 @@ Item {
   }
 
   // ---------------------------------------------------------------- label
-  // The name; your own DM adds a dim "you" (Slack: "Leonavas  you"); a DM
+  // The name; your own DM adds a dim "you" (Slack: "Ana  you"); a DM
   // then shows the person's status emoji right after.
   Item {
     id: labelBox
