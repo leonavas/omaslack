@@ -448,17 +448,20 @@ Item {
           id: tools
           anchors.centerIn: parent
           spacing: m.t.sp(1)
+          // The user's one-click reactions (Workspace.quickReactions), made
+          // only while the bar shows.
           Repeater {
-            model: ["white_check_mark", "eyes", "raised_hands"]
+            id: quick
+            model: toolbar.visible && m.ws ? m.ws.quickReactions : []
             delegate: Rectangle {
               required property var modelData
               width: m.t.sp(30); height: width; radius: Math.max(4, m.t.radiusSmall)
               color: qma.containsMouse ? m.t.hoverStrong : "transparent"
               EmojiIcon { anchors.centerIn: parent; app: m.app; ws: m.ws; name: parent.modelData; size: m.t.sp(18) }
-              MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: m.ws.react(m.conv, m.msg.ts, parent.modelData) }
+              MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (m.ws.react(m.conv, m.msg.ts, parent.modelData)) m.ws.bumpEmoji(parent.modelData) }
             }
           }
-          Rectangle { width: 1; height: m.t.sp(20); color: m.t.line; anchors.verticalCenter: parent.verticalCenter }
+          Rectangle { visible: quick.count > 0; width: 1; height: m.t.sp(20); color: m.t.line; anchors.verticalCenter: parent.verticalCenter }
           IconButton { id: reactBtn; app: m.app; size: m.t.sp(30); icon: "󰇵"; tip: m.app.tr("Add reaction", "Adicionar reação"); onClicked: m.pickReaction(reactBtn) }
           // A tombstone keeps its reactions and the menu; its replies bar opens the thread.
           IconButton { visible: !m.inThread && !m.tombstone; app: m.app; size: m.t.sp(30); icon: "󰍪"; tip: m.app.tr("Reply in thread", "Responder na conversa"); onClicked: m.ws.openThread(m.conv, m.msg.threadTs || m.msg.ts) }
@@ -577,7 +580,13 @@ Item {
     var w = m.ws, msg = m.msg, conv = m.conv
     var saved = w.isSaved(conv, msg.ts)
     var pinned = msg.pinnedTo && msg.pinnedTo.indexOf(conv) >= 0
-    var items = [{ reactions: ["white_check_mark", "eyes", "raised_hands", "+1", "heart"], action: function(n) { w.react(conv, msg.ts, n) } }]
+    // The one-click reactions, then the next most used: five.
+    var rx = [], seen = {}
+    w.quickReactions.concat(w.frequentEmoji.map(function(n) { return Emoji.withTone(n, w.skinTone) })).forEach(function(n) {
+      var base = n.split("::")[0]
+      if (rx.length < 5 && !seen[base]) { seen[base] = true; rx.push(n) }
+    })
+    var items = [{ reactions: rx, ws: w, action: function(n) { if (w.react(conv, msg.ts, n)) w.bumpEmoji(n) } }]
     items.push({ label: m.app.tr("Add reaction…", "Adicionar reação…"), icon: "󰇵", hint: "R", action: function() { m.pickReaction(toolbar.visible ? reactBtn : box) } })
     // A tombstone: its reactions and its thread are all that's left.
     if (m.tombstone) {

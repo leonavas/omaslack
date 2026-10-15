@@ -626,7 +626,7 @@ Item {
     if (h.convKind === "mpim") {
       if (c) return w.convLabel(h.conv)
       var names = Model.mpimHandles(h.convName).filter(function(x) { return x !== (w.users[w.me.id] || {}).handle }).map(function(x) { var id = w.handles[x]; return id && w.users[id] ? w.users[id].name : x })
-      return names.join(", ")
+      return Model.mpimLabel(names)
     }
     return (h.convKind === "private" ? "󰌾 " : "#") + (c && c.name ? c.name : h.convName)
   }
