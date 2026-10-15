@@ -90,11 +90,16 @@ QtObject {
   readonly property color newLine: red
   readonly property color threadBlue: blue
 
-  // Colors as strings, for the rich text the renderer writes.
+  // Colors as strings, for the rich text the renderer writes, and the word
+  // spacing that draws a pill's no-break spaces as its room (Mrkdwn.pill):
+  // Slack's 2px on its 15px text (3px for inline code, in the code font),
+  // whatever the width of the font's space.
   readonly property var html: ({
     link: hex(link), mention: hex(mention), mentionBg: "rgba(" + Math.round(blue.r * 255) + "," + Math.round(blue.g * 255) + "," + Math.round(blue.b * 255) + ",0.18)",
     meText: hex(yellow), meBg: "rgba(" + Math.round(yellow.r * 255) + "," + Math.round(yellow.g * 255) + "," + Math.round(yellow.b * 255) + ",0.24)",
-    code: hex(code), codeBg: hex(mix(bg, fg, 0.08)), dim: hex(fgDim), text: hex(fg)
+    code: hex(code), codeBg: hex(mix(bg, fg, 0.08)), dim: hex(fgDim), text: hex(fg),
+    pillSpacing: Math.round((Math.max(1, Math.round(fsText / 7)) - spaceMetrics.advanceWidth) * 100) / 100,
+    codeSpacing: Math.round((Math.max(1, Math.round(fsText / 5)) - monoSpaceMetrics.advanceWidth) * 100) / 100
   })
 
   // ---------------------------------------------------------------- type
@@ -111,6 +116,8 @@ QtObject {
   readonly property int fsHuge: px(24)
   readonly property int fsIcon: px(15)
   readonly property int emojiPx: px(18)
+  readonly property TextMetrics spaceMetrics: TextMetrics { font.family: t.font; font.pixelSize: t.fsText; text: " " }
+  readonly property TextMetrics monoSpaceMetrics: TextMetrics { font.family: "monospace"; font.pixelSize: t.fsText; text: " " }
 
   // ---------------------------------------------------------------- shape
   readonly property int radius: Style.cornerRadius

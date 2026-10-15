@@ -58,6 +58,9 @@ Item {
   // person id → the conversation, until one is opened (then in `convs`).
   property var goneDms: ({})
   property int sectionsRev: 0
+  // Slack's "Active only" sidebar filter (sidebar_behavior
+  // "hide_inactive_channels"): dormant channels leave the sidebar.
+  property bool hideInactive: false
   property var prefs: ({})
   property string globalNotify: "everything"
   property bool prefsLoaded: false
@@ -124,7 +127,7 @@ Item {
       lang: root.lang, me: root.me.id, convs: root.convs, users: root.users, handles: root.handles, counts: root.counts,
       sections: root.sections, stars: root.stars, openIms: root.openIms, prefs: root.prefsLoaded ? root.prefs : {},
       current: root.current, view: root.view, focused: root.focused, collapsed: root.collapsed, drafts: root.drafts,
-      draftCount: Object.keys(root.drafts).length, threads: root.threads
+      draftCount: Object.keys(root.drafts).length, threads: root.threads, hideInactive: root.hideInactive, recents: root.recents
     })
   }
 
@@ -504,6 +507,7 @@ Item {
         var o = Model.parseConv(c, root.convs[c.id])
         o.member = true
         o.guest = false
+        o.dormant = !!(c.properties && c.properties.is_dormant === true)
         // A deactivated account's DM stays aside, unless it's the one open.
         if (c.is_user_deleted && o.user) gone[o.user] = o
         if (c.is_user_deleted && c.id !== root.current) continue
@@ -525,7 +529,7 @@ Item {
     root.api("users.channelSections.list", {}, function(b) {
       root.sections = (b.channel_sections || []).map(function(s) {
         return { id: s.channel_section_id, type: s.type, name: s.name || "", emoji: s.emoji || "", next: s.next_channel_section_id || "",
-                 ids: (s.channel_ids_page && s.channel_ids_page.channel_ids) || [] }
+                 ids: (s.channel_ids_page && s.channel_ids_page.channel_ids) || [], hidden: s.is_hidden === true }
       })
       root.sectionsRev++
       cacheTimer.restart()
@@ -555,6 +559,7 @@ Item {
       ;(b.is_open || []).forEach(function(id) { open[id] = true })
       root.openIms = open
       if (b.prefs && typeof b.prefs.show_sidebar_avatars === "boolean") root.sidebarAvatars = root.app ? root.app.setting("sidebarAvatars", b.prefs.show_sidebar_avatars) !== false : b.prefs.show_sidebar_avatars
+      if (b.prefs && typeof b.prefs.sidebar_behavior === "string") root.hideInactive = b.prefs.sidebar_behavior === "hide_inactive_channels"
       root.sectionsRev++
     }, function() {})
   }
@@ -618,6 +623,7 @@ Item {
       root.globalNotify = (all.global && all.global.global_desktop) || "everything"
       root.prefsLoaded = true
       root.rawPrefs = b.prefs || {}
+      if (b.prefs && typeof b.prefs.sidebar_behavior === "string") root.hideInactive = b.prefs.sidebar_behavior === "hide_inactive_channels"
       root.convsRev++
     }, function() {})
   }
@@ -873,6 +879,7 @@ Item {
     }
     case "pref_change":
       if (e.name === "all_notifications_prefs" || e.name === "muted_channels") root.loadPrefs()
+      if (e.name === "sidebar_behavior") { root.hideInactive = e.value === "hide_inactive_channels"; root.sectionsRev++ }
       break
     case "channel_joined": case "group_joined": case "im_created": case "mpim_joined": case "channel_created":
       root.loadConversations(); break
@@ -940,13 +947,16 @@ Item {
     if (st === "message_changed" && e.message) {
       var nm = Model.parseMessage(e.message)
       root.replaceEverywhere(chan, nm.ts, function(old) {
+        // A parent deleted under its replies: what the tombstone leaves
+        // out (the thread, the reactions) stays as it was.
+        if (nm.tombstone) return Model.patch(Model.tombstone(old), nm.replyCount ? { replyCount: nm.replyCount, latestReply: nm.latestReply, replyUsers: nm.replyUsers, replyUsersCount: nm.replyUsersCount } : {})
         var keep = { ephemeral: old.ephemeral }
         return Model.patch(nm, keep)
       })
       return
     }
     if (st === "message_deleted") {
-      root.removeEverywhere(chan, e.deleted_ts)
+      root.deleteEverywhere(chan, e.deleted_ts)
       countsSoon.restart()
       return
     }
@@ -1098,6 +1108,16 @@ Item {
       var pi = pl.findIndex(function(p) { return p.msg.ts === ts })
       if (pi >= 0) { var np = pl.slice(); np[pi] = { msg: fn(np[pi].msg), by: np[pi].by, created: np[pi].created }; root.pins[chan] = np; root.pinsRev++ }
     }
+  }
+
+  // Deleted: gone, but a thread's parent with replies stays over them as
+  // Slack's tombstone. Slack deletes a tombstone once its replies are gone.
+  function deleteEverywhere(chan, ts) {
+    var m = root.findAny(chan, ts)
+    var r = root.replies[chan + "/" + ts]
+    var heads = !!m && !m.tombstone && (!m.threadTs || m.threadTs === m.ts) && (m.replyCount > 0 || m._replyCount > 0 || (!!r && r.msgs.length > 1))
+    if (heads) root.replaceEverywhere(chan, ts, Model.tombstone)
+    else root.removeEverywhere(chan, ts)
   }
 
   function removeEverywhere(chan, ts) {
@@ -1791,10 +1811,11 @@ Item {
 
   function deleteMessage(conv, ts) {
     var m = root.findAny(conv, ts)
-    root.removeEverywhere(conv, ts)
+    root.deleteEverywhere(conv, ts)
     root.api("chat.delete", { channel: conv, ts: ts }, function() {}, function(err) {
       root.say(root.errorText(err))
       if (m) {
+        root.replaceEverywhere(conv, ts, function() { return m })
         var h = root.histories[conv]
         if (h && (!m.threadTs || m.threadTs === m.ts || m.subtype === "thread_broadcast")) root.setHistory(conv, { msgs: Model.upsert(h.msgs, m), noOlder: h.noOlder, loading: h.loading, detached: h.detached })
         root.fetchHistory(conv, "poll")
@@ -2357,9 +2378,10 @@ Item {
     if (from && (!to || from.id !== to.id)) params.remove = JSON.stringify([{ channel_section_id: from.id, channel_ids: [conv] }])
     // Local first.
     root.sections = root.sections.map(function(s) {
-      var ids = s.ids.filter(function(x) { return x !== conv })
+      // A user group's section is Slack's to fill: it keeps its channels.
+      var ids = s.type === "user_group" ? s.ids : s.ids.filter(function(x) { return x !== conv })
       if (to && s.id === to.id && (s.type === "standard" || s.type === "custom")) ids.push(conv)
-      return { id: s.id, type: s.type, name: s.name, emoji: s.emoji, next: s.next, ids: ids }
+      return { id: s.id, type: s.type, name: s.name, emoji: s.emoji, next: s.next, ids: ids, hidden: !!s.hidden }
     })
     root.sectionsRev++
     if (!params.insert && !params.remove) return
@@ -2770,6 +2792,8 @@ Item {
     root.botsRev++
     if (c.me && c.me.id) root.me = c.me
     if (c.team && c.team.id) root.team = c.team
+    // "Active only" from the last run: the sidebar starts as it was left.
+    root.hideInactive = c.hideInactive === true
     // The latest messages of the conversations opened lately: on screen at
     // once when one opens, until the newest page replaces them.
     root.recents = c.recents || []
@@ -2824,7 +2848,7 @@ Item {
     })
     cacheFile.setText(JSON.stringify({ v: 1, me: root.me, team: root.team, users: root.users, convs: convs, sections: root.sections,
                                        stars: root.stars, openIms: root.openIms, emoji: root.customEmoji, aliases: root.emojiAliases,
-                                       directory: root.directory, bots: root.bots, recents: recents, msgs: msgs }))
+                                       directory: root.directory, bots: root.bots, recents: recents, msgs: msgs, hideInactive: root.hideInactive }))
   }
 
   Component.onDestruction: if (root.booted) root.saveCache()
