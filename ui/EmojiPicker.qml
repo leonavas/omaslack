@@ -277,19 +277,24 @@ Item {
     Qt.callLater(p.syncSticky)
   }
 
+  // A tab of the bar: the grid glides to its section, the tab lit at once.
   function jumpTo(i) {
     if (p.searching) { field.text = "" }
     var s = p.sections[i]
     if (!s || s.row < 0) return
-    list.positionViewAtIndex(s.row, ListView.Beginning)
-    p.curSec = i
-    p.jumpSec = list.atYEnd ? i : -1
-    Qt.callLater(p.syncSticky)
+    p.jumpSec = i
+    glide.to(function() { var s2 = p.sections[i]; if (s2) list.positionViewAtIndex(s2.row, ListView.Beginning) }, function() {
+      p.curSec = i
+      p.jumpSec = list.atYEnd ? i : -1
+      Qt.callLater(p.syncSticky)
+    })
   }
+
+  Glide { id: glide; view: list }
 
   // The section header pinned on top, pushed up by the next one.
   function syncSticky() {
-    if (!list.atYEnd) p.jumpSec = -1
+    if (!list.atYEnd && !glide.running) p.jumpSec = -1
     if (p.searching || !p.rows.length) { p.stickyY = 0; return }
     var top = list.indexAt(p.gridX + 2, list.contentY + 1)
     if (top < 0) return
@@ -514,6 +519,14 @@ Item {
       ScrollBar.vertical: ThinScroll { app: p.app }
       onContentYChanged: p.syncSticky()
       onHeightChanged: Qt.callLater(p.syncSticky)
+      // The wheel / touchpad takes over from a tab's glide. Only notices
+      // it: a blocking handler would keep the list from scrolling.
+      WheelHandler {
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        blocking: false
+        target: null
+        onWheel: glide.stop()
+      }
 
       delegate: Item {
         id: rowItem

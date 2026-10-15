@@ -7,13 +7,15 @@ import Quickshell.Io
 // a plain file, no API and no rate limit; curl sends nothing of yours, the
 // Slack session only ever goes to Slack). Shown as the green button over
 // your photo (Rail.qml) and in your menu (DlgAccount.qml), as slick does by
-// your name. A click updates it when Omarchy installed it from git
-// (`omarchy plugin add`): `omarchy plugin update`, after which the shell
-// reloads its plugins, this one with them, and the new copy brings the
-// window back and says how it went. A checkout of your own (a symlink in
-// Omarchy's plugin folder, or a copy anywhere else) is left alone: the click
-// only tells how to update it, as slick does when something else owns its
-// binary. Background checks are quiet; only the menu's check reports errors.
+// your name. A click opens the update the way Omarchy shows its own, in its
+// floating terminal (lib/update.sh): both versions and the exact command,
+// `omarchy plugin update` for a clone Omarchy made (`omarchy plugin add`),
+// `git pull --ff-only` for a checkout of your own (a symlink in Omarchy's
+// plugin folder, or a clone anywhere else); a confirm, then its output.
+// Once it pulled, the whole shell restarts (as omarchy-update ends), and the
+// new copy brings the window back and says how it went. A copy outside git
+// only hears where to get it. Background checks are quiet; only the menu's
+// check reports errors.
 Item {
   id: u
   property var app: null
@@ -22,9 +24,9 @@ Item {
   readonly property string manifestUrl: "https://raw.githubusercontent.com/leonavas/omaslack/main/manifest.json"
   // `SLACKQS_UPDATE_DEV=1` takes whatever GitHub has as newer, to see the button.
   readonly property bool dev: Quickshell.env("SLACKQS_UPDATE_DEV") === "1"
-  // Where an update leaves its note (.json), output (.log) and exit code
-  // (.rc) for whichever copy of us is running once it's done: the reload
-  // replaces this one in the middle of it.
+  // Where an update leaves its note (.json), the pid of its terminal's run
+  // (.pid), its output (.log) and exit code (.rc) for whichever copy of us
+  // is running once it's done: the restart replaces this one in the middle.
   readonly property string base: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omaslack-update"
   readonly property string folderIn: { try { return u.app ? decodeURIComponent(u.app.pluginDir) : "" } catch (e) { return u.app.pluginDir } }
 
@@ -42,26 +44,24 @@ Item {
 
   // ---------------------------------------------------------------- state
   property string latest: ""     // the newer version found
-  // "" (nothing to do), "available", "updating", or "updated": on disk but
-  // not loaded (the shell didn't reload; the button reloads it).
+  // "" (nothing to do), "available", "updating" (its terminal is open), or
+  // "updated": on disk but not loaded (the shell didn't restart; the button
+  // restarts it).
   property string phase: ""
   property bool checking: false  // a check asked for from the menu
 
   // How this copy was installed: "omarchy" (a git clone in Omarchy's plugin
   // folder, what `omarchy plugin add` makes and `omarchy plugin update`
   // pulls), "checkout" (a symlink there, or a copy in a git repo elsewhere:
-  // yours to pull) or "other"; with the plugin's id (its folder's name, as
-  // Omarchy names it) and the folder to pull in.
+  // `git pull` in it) or "other"; with the plugin's id (its folder's name,
+  // as Omarchy names it) and the folder to pull in.
   property string mode: ""
   property string pluginId: ""
   property string folder: ""
 
-  // Empty when a click can update; else how to, for the toast and the menu.
+  // Empty when a click can update (in git); else how to, for the toast and the menu.
   readonly property string how: {
-    if (!u.app || u.mode === "omarchy") return ""
-    var home = u.app.home
-    var at = home && u.folder.indexOf(home + "/") === 0 ? "~" + u.folder.slice(home.length) : u.folder
-    if (u.mode === "checkout") return u.app.tr("a checkout of your own: run git pull in " + at, "um checkout seu: rode git pull em " + at)
+    if (!u.app || u.mode === "omarchy" || u.mode === "checkout") return ""
     return u.app.tr("not installed from git: get the new version at " + u.repo, "não instalado pelo git: pegue a versão nova em " + u.repo)
   }
 
@@ -149,56 +149,66 @@ Item {
   }
 
   // ---------------------------------------------------------------- updating
-  // The button and the menu's row: update, or reload once it's on disk; or
-  // how to, when the copy isn't Omarchy's to update.
+  // The button and the menu's row: open the update's terminal, or reload
+  // once it's on disk; or how to, when the copy isn't in git.
   function update() {
     if (u.phase === "updated") { u.reload(); return }
     if (u.phase !== "available") return
     if (u.how || !u.pluginId) { u.say(u.how || u.app.tr("Couldn't find where the plugin is installed", "Não foi possível achar onde o plugin está instalado")); return }
     u.phase = "updating"
-    u.say(u.app.tr("Updating Slack to " + u.latest + "… the shell then reloads its plugins and the window comes back",
-                   "Atualizando o Slack para " + u.latest + "… depois o shell recarrega os plugins e a janela volta"))
-    run.command = ["setsid", "-f", "-w", "sh", "-c",
-      'b=$2; printf "%s\\n" "$3" >"$b.json"; rm -f "$b.rc"\n' +
-      'command -v omarchy >/dev/null 2>&1 || PATH=$PATH:${OMARCHY_PATH:-/usr/share/omarchy}/bin\n' +
-      'omarchy plugin update "$1" --yes >"$b.log" 2>&1; echo $? >"$b.rc"',
-      "omaslack-update", u.pluginId, u.base, u.note(u.latest)]
+    u.say(u.app.tr("Confirm the update to " + u.latest + " in the terminal", "Confirme a atualização para " + u.latest + " no terminal"))
+    run.command = ["bash", u.folderIn + "/lib/update.sh", "open", "--mode=" + u.mode, "--id=" + u.pluginId, "--folder=" + u.folder,
+                   "--from=" + u.version, "--to=" + u.latest, "--base=" + u.base, "--note=" + u.note(u.latest),
+                   "--lang=" + u.app.lang, "--repo=" + u.repo]
     run.running = true
     pickupTimer.restart()
   }
   function note(to) { return JSON.stringify({ from: u.version, to: to, open: !!u.app.windowOpen }) }
 
-  // In a session of its own: the reload that comes with the update (the
-  // shell watches its plugin folder, and the script rescans at the end)
-  // ends this Process, and must not end the update with it.
+  // Leaves the note and opens the terminal, forked off in a session (and a
+  // uwsm scope) of its own, so the shell restart that comes with the update
+  // doesn't close it; done at once. Not 0: no terminal to open, and no note left.
   Process {
     id: run
-    onExited: if (!pickup.running) pickup.running = true
+    onExited: code => {
+      if (code !== 0 && u.phase === "updating") {
+        u.phase = "available"
+        u.say(u.app.tr("Couldn't open a terminal for the update", "Não foi possível abrir um terminal para a atualização"))
+      }
+      if (!pickup.running) pickup.running = true
+    }
   }
 
-  // On disk but not loaded: the shell reloads its plugins, and the new copy
-  // says so, as after an update.
+  // On disk but not loaded: the shell restarts (a rescan of its plugins
+  // keeps the old QML; the rescan only without omarchy-restart-shell), in a
+  // session of its own so it outlives this shell, and the new copy says so,
+  // as after an update.
   function reload() {
-    Quickshell.execDetached(["sh", "-c",
+    Quickshell.execDetached(["setsid", "-f", "sh", "-c",
       'printf "%s\\n" "$2" >"$1.json"; : >"$1.log"; echo 0 >"$1.rc"\n' +
       'command -v omarchy-shell >/dev/null 2>&1 || PATH=$PATH:${OMARCHY_PATH:-/usr/share/omarchy}/bin\n' +
-      'omarchy-shell shell rescanPlugins',
+      'if command -v omarchy-restart-shell >/dev/null 2>&1; then omarchy-restart-shell; else omarchy-shell shell rescanPlugins; fi',
       "omaslack-reload", u.base, u.note(u.latest)])
   }
 
   // ---------------------------------------------------------------- the outcome
   // Whoever is running once the update is done reads how it went: this copy
-  // when nothing reloaded (it failed, or was up to date already), else the
-  // new one. Taken once its exit code is two seconds old, so a reload it set
-  // off has replaced this copy by then. 3: nothing pending; 4: just done;
-  // 5: still running (a stale note is dropped after ten minutes).
+  // when nothing reloaded (it failed, was declined or up to date already),
+  // else the new one. Taken once its exit code is two seconds old, so a
+  // restart it set off has replaced this copy by then. 3: nothing pending;
+  // 4: just done; 5: its terminal is still open (by the run's pid; one that
+  // never started is given up on after thirty seconds).
   Process {
     id: pickup
     command: ["sh", "-c",
       'b=$1; [ -f "$b.json" ] || exit 3; now=$(date +%s)\n' +
-      'if [ ! -f "$b.rc" ]; then [ $((now - $(stat -c %Y "$b.json"))) -lt 600 ] && exit 5; rm -f "$b.json" "$b.log"; exit 3; fi\n' +
+      'if [ ! -f "$b.rc" ]; then pid=$(cat "$b.pid" 2>/dev/null)\n' +
+      '  if [ -n "$pid" ]; then kill -0 "$pid" 2>/dev/null && exit 5\n' +
+      '  elif [ $((now - $(stat -c %Y "$b.json"))) -lt 30 ]; then exit 5; fi\n' +
+      '  [ -f "$b.rc" ] || { rm -f "$b.json" "$b.log" "$b.pid"; exit 3; }\n' +
+      'fi\n' +
       '[ $((now - $(stat -c %Y "$b.rc"))) -ge 2 ] || exit 4\n' +
-      'head -n 1 "$b.json"; head -n 1 "$b.rc"; tail -n 20 "$b.log" 2>/dev/null; rm -f "$b.json" "$b.rc" "$b.log"',
+      'head -n 1 "$b.json"; head -n 1 "$b.rc"; tail -n 20 "$b.log" 2>/dev/null; rm -f "$b.json" "$b.rc" "$b.log" "$b.pid"',
       "pickup", u.base]
     stdout: StdioCollector { id: pickupOut; waitForEnd: true }
     onExited: code => {
@@ -206,9 +216,10 @@ Item {
       if (code === 4 || code === 5 || (code === 3 && run.running)) return
       pickupTimer.stop()
       if (u.phase !== "updating") return
-      // Updating, with no note left: it never started.
+      // Updating, with no note left: its terminal never started, or went
+      // without a word (killed).
       u.phase = "available"
-      u.say(u.app.tr("Didn't update: couldn't run omarchy plugin update", "Não atualizou: não foi possível rodar omarchy plugin update"))
+      u.say(u.app.tr("Didn't update: the terminal didn't open or was closed", "Não atualizou: o terminal não abriu ou foi fechado"))
     }
   }
   Timer { id: pickupTimer; interval: 1000; repeat: true; onTriggered: if (!pickup.running) pickup.running = true }
@@ -221,7 +232,13 @@ Item {
     var log = lines.slice(2).map(function(l) { return l.trim() }).filter(function(l) { return l !== "" })
     var mine = u.phase === "updating"
     var msg
-    if (rc === 0 && log.some(function(l) { return / is up to date\.$/.test(l) })) {
+    // Declined in the terminal, or it was closed: it said so there.
+    if (rc === 130) {
+      if (mine) u.phase = u.latest ? "available" : ""
+      return
+    }
+    // "<id> is up to date." from Omarchy, "Already up to date." from git.
+    if (rc === 0 && log.some(function(l) { return /up[ -]to[ -]date\.$/i.test(l) })) {
       u.phase = ""
       u.latest = ""
       msg = u.app.tr("Slack is already the latest", "O Slack já é a versão mais recente")
@@ -230,17 +247,20 @@ Item {
       u.latest = ""
       msg = u.app.tr("Updated to " + u.version, "Atualizado para " + u.version)
     } else if (rc === 0) {
-      // On disk, but this is still the old copy: the shell didn't reload.
+      // On disk, but this is still the old copy: the shell didn't restart.
       u.latest = n.to || u.latest
       u.phase = "updated"
       msg = u.app.tr("Updated to " + u.latest + " · click reload to use it", "Atualizado para " + u.latest + " · clique em recarregar para usar")
     } else {
       u.phase = u.latest ? "available" : ""
-      var why = log.length ? log[log.length - 1].replace(/^omarchy-plugin-update:\s*/, "") : "exit " + rc
+      // The first error git or Omarchy gave (git's last line is "Aborting"), else the last line.
+      var bad = log.filter(function(l) { return /^(omarchy-plugin-update|error|fatal):/.test(l) })
+      var why = (bad.length ? bad[0] : log.length ? log[log.length - 1] : "exit " + rc)
+                .replace(/^(omarchy-plugin-update|error|fatal):\s*/, "").replace(/:$/, "")
       msg = u.app.tr("Didn't update: ", "Não atualizou: ") + why
     }
     if (mine || !n.open) { u.say(msg); return }
-    // A new copy after the reload: the window comes back first.
+    // A new copy after the restart: the window comes back first.
     u._later = msg
     comeBack.restart()
   }

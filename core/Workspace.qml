@@ -1040,7 +1040,8 @@ Item {
 
   // A reaction notifies as a message there would: not while paused, not
   // for the conversation (or thread) in front of you, not in a muted
-  // channel or one set to nothing.
+  // channel or one set to nothing on its own (Slack's account-wide level
+  // doesn't count, as in maybeNotify).
   function maybeNotifyReaction(e, m) {
     if (!root.app || !root.app.notificationsOn || root.dnd) return
     var chan = e.item.channel
@@ -1048,7 +1049,7 @@ Item {
     var reading = (chan === root.current && root.view === "conv" && root.focused) ||
                   (threadTs && root.thread && root.thread.conv === chan && root.thread.ts === threadTs && root.focused)
     if (reading || root.isMuted(chan)) return
-    if (((root.prefs[chan] || {}).desktop || root.globalNotify) === "nothing") return
+    if ((root.prefs[chan] || {}).desktop === "nothing") return
     root.notify({ kind: "reaction", conv: chan, ts: e.item.ts, threadTs: threadTs, user: e.user, reaction: e.reaction,
                   msg: m || null, team: root.teamId })
   }
@@ -1126,6 +1127,12 @@ Item {
   }
 
   // ---------------------------------------------------------------- notify
+  // Slack's account-wide level ("Notify me about") only sets what a channel
+  // without a level of its own notifies of: every message, or mentions
+  // ("nothing" there reads as mentions, as notifyLevel shows it). It never
+  // silences DMs or mentions: people set it to Nothing to keep Slack's own
+  // apps quiet, and the switch for these is the bar's (notificationsOn).
+  // A channel set to nothing on its own stays quiet.
   function maybeNotify(chan, m, isReply) {
     if (!root.app || !root.app.notificationsOn) return
     if (root.dnd) return
@@ -1147,13 +1154,13 @@ Item {
         if (p.muted && !mention) return
       } else {
         if (p.muted && !Md.mentionsMe(m, root.me.id)) return
+        if (p.desktop === "nothing") return
         var level = p.desktop || root.globalNotify
-        if (level === "nothing") return
         if (!mention && level !== "everything") return
         // Also sent to the channel: a channel message like any other.
         if (isReply && !mention && m.subtype !== "thread_broadcast") return
       }
-    } else if (root.globalNotify === "nothing" && !root.vips[m.user]) return
+    }
     root.notify({ kind: "message", conv: chan, ts: m.ts, threadTs: isReply ? m.threadTs : "", msg: m, mention: mention, dm: dm, team: root.teamId })
   }
 

@@ -33,7 +33,8 @@ DialogFrame {
       { keys: [["Ctrl", "N"]], en: "New message", pt: "Nova mensagem" },
       { keys: [["Enter"]], en: "Send", pt: "Enviar" },
       { keys: [["Shift", "Enter"]], en: "New line (keeps a list or quote going)", pt: "Nova linha (continua a lista ou citação)" },
-      { keys: [["↑"]], en: "Empty box: edit your last message", pt: "Caixa vazia: editar sua última mensagem" },
+      { keys: [["↑"]], en: "Empty box: select messages", pt: "Caixa vazia: selecionar mensagens" },
+      { keys: [["Ctrl", "↑"]], en: "Empty box: edit your last message", pt: "Caixa vazia: editar sua última mensagem" },
       { keys: [["Enter"], ["Esc"]], join: "/", en: "While editing: save / cancel", pt: "Editando: salvar / cancelar" },
       { keys: [["Esc"]], en: "Mark the conversation as read", pt: "Marcar a conversa como lida" },
       { keys: [["Ctrl", "V"]], en: "Paste, pictures too", pt: "Colar, imagens também" },
@@ -43,6 +44,20 @@ DialogFrame {
       { keys: [["↑"], ["↓"]], join: "/", en: "In the suggestions: move", pt: "Nas sugestões: mover" },
       { keys: [["Tab"], ["Enter"]], en: "In the suggestions: pick", pt: "Nas sugestões: escolher" },
       { keys: [["Esc"]], en: "In the suggestions: dismiss", pt: "Nas sugestões: dispensar" }
+    ] },
+    { en: "Selected message", pt: "Mensagem selecionada", rows: [
+      { keys: [["↑"], ["↓"]], join: "/", en: "Previous / next message", pt: "Mensagem anterior / próxima" },
+      { keys: [["Esc"]], en: "Back to the message box", pt: "Voltar para a caixa de mensagem" },
+      { keys: [["E"]], en: "Edit (yours)", pt: "Editar (as suas)" },
+      { keys: [["Delete"], ["Backspace"]], en: "Delete (yours)", pt: "Excluir (as suas)" },
+      { keys: [["R"]], en: "Add a reaction", pt: "Adicionar uma reação" },
+      { keys: [["T"], ["Enter"]], en: "Open or reply in thread", pt: "Abrir ou responder na conversa" },
+      { keys: [["A"]], en: "Save for later", pt: "Salvar para depois" },
+      { keys: [["P"]], en: "Pin or unpin", pt: "Fixar ou desafixar" },
+      { keys: [["S"], ["F"]], en: "Forward", pt: "Encaminhar" },
+      { keys: [["U"]], en: "Mark unread", pt: "Marcar como não lida" },
+      { keys: [["M"]], en: "Remind me about this", pt: "Lembrar-me disto" },
+      { keys: [["L"]], en: "Copy link", pt: "Copiar link" }
     ] },
     { en: "Formatting", pt: "Formatação", rows: [
       { keys: [["Ctrl", "B"], ["Alt", "B"]], en: "Bold", pt: "Negrito" },

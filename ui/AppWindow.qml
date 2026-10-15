@@ -24,6 +24,7 @@ FloatingWindow {
   property string activityKey: ""
   onRailTabChanged: { appWin.activityOpen = false; appWin.closePeek() }
   readonly property bool menusShown: menus.shown
+  readonly property bool pickerShown: picker.shown
   readonly property Item rootItem: root
   readonly property string dialogName: dialogs.name
 
@@ -61,6 +62,23 @@ FloatingWindow {
   function viewImage(file) { viewer.file = file; viewer.active = true }
   function toast(text) { toastBox.show(text) }
   function focusComposer() { if (content.item && content.item.focusComposer) content.item.focusComposer() }
+
+  // Slack's "Delete message": the message as the conversation shows it,
+  // Cancel / Delete (Enter deletes, Esc cancels). `before` runs first on
+  // Delete (an emptied edit closes its box).
+  function confirmDelete(conv, msg, before) {
+    var w = appWin.ws
+    if (!w || !msg) return
+    appWin.dialog("confirm", {
+      title: appWin.app.tr("Delete message", "Excluir mensagem"),
+      text: appWin.app.tr("Are you sure you want to delete this message? This cannot be undone.", "Tem certeza de que deseja excluir esta mensagem? Essa ação não pode ser desfeita."),
+      confirm: appWin.app.tr("Delete", "Excluir"),
+      danger: true,
+      conv: conv,
+      msg: msg,
+      action: function() { if (before) before(); w.deleteMessage(conv, msg.ts) }
+    })
+  }
 
   // Hovering DMs, Activity, Files or Later on the rail peeks at that list
   // in a card beside it, as Slack does; a click in it goes to the tab (in

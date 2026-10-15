@@ -212,6 +212,7 @@ Item {
     ws: cv.ws
     conv: cv.convId
     intro: introC
+    onLeave: cv.focusComposer()
   }
 
   Component {
@@ -256,7 +257,7 @@ Item {
       visible: active
       x: cv.t.sp(20)
       width: parent.width - cv.t.sp(40)
-      sourceComponent: Composer { app: cv.app; win: cv.win; ws: cv.ws; conv: cv.convId }
+      sourceComponent: Composer { app: cv.app; win: cv.win; ws: cv.ws; conv: cv.convId; messageList: messages }
     }
 
     ReadOnlyNotice {

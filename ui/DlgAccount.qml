@@ -66,10 +66,11 @@ Item {
              : d.up && d.up.checking ? d.app.tr("Checking for updates…", "Procurando atualizações…") : d.app.tr("Check for updates", "Procurar atualizações"),
       hint: d.upPhase === "updated" ? "↻" : "", faded: !!d.up && d.up.checking,
       run: function() { if (d.upPhase === "updated") d.up.update(); else d.up.check(true) } },
-    // In green, as what's new; faded while it updates; how to, when it isn't Omarchy's to update.
+    // In green, as what's new: opens the update in a terminal; faded while
+    // that's open; how to, when the copy isn't in git.
     { kind: "item", hidden: d.upPhase !== "available" && d.upPhase !== "updating",
       good: d.upPhase === "available", faded: d.upPhase === "updating",
-      label: d.upPhase === "available" ? d.app.tr("Update to ", "Atualizar para ") + d.up.latest : d.app.tr("Updating…", "Atualizando…"),
+      label: d.upPhase === "available" ? d.app.tr("Update to ", "Atualizar para ") + d.up.latest + "…" : d.app.tr("Updating in the terminal…", "Atualizando no terminal…"),
       hint: d.upPhase === "available" ? "↓" : "", sub2: d.upPhase === "available" && d.up.how ? d.up.how : "",
       run: function() { d.up.update() } },
     { kind: "item", label: d.app.tr("About Slack", "Sobre o Slack"), hint: d.upPhase !== "" ? d.app.tr("· update available", "· atualização disponível") : "",
