@@ -1,0 +1,65 @@
+name: PR Webhook Notification
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if secrets are available
+        id: check-secrets
+        run: |
+          if [ -z "${{ secrets.WEBHOOK_URL }}" ] || [ -z "${{ secrets.WEBHOOK_AUTH }}" ]; then
+            echo "secrets_available=false" >> $GITHUB_OUTPUT
+            echo "::warning::Webhook secrets not available (expected for fork PRs)"
+          else
+            echo "secrets_available=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send webhook notification
+        if: steps.check-secrets.outputs.secrets_available == 'true'
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_AUTH: ${{ secrets.WEBHOOK_AUTH }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO_FULL_NAME: ${{ github.repository }}
+        run: |
+          # Build JSON payload safely using jq to handle special characters
+          PAYLOAD=$(jq -n \
+            --arg desc "pull request in repo $REPO_FULL_NAME: $PR_TITLE (#$PR_NUMBER) $PR_HTML_URL" \
+            --arg branch "$PR_HEAD_REF" \
+            --arg action "Só avise o Rodrigo sobre essa PR." \
+            '{
+              description: $desc,
+              branch: $branch,
+              action: $action
+            }')
+          
+          # Send POST request
+          HTTP_CODE=$(curl -s -o /tmp/webhook-response.txt -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: $WEBHOOK_AUTH" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK_URL")
+          
+          echo "HTTP response code: $HTTP_CODE"
+          echo "Response body:"
+          cat /tmp/webhook-response.txt
+          
+          # Check if request was successful
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✓ Webhook notification sent successfully"
+          else
+            echo "✗ Webhook notification failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
