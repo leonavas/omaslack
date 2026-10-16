@@ -14,6 +14,9 @@ Row {
   property var att: null
   property var linkHandler: null
   property var imageSource: null
+  property var msg: null
+  // MessageBody.press: what an app's button does.
+  property var pressHandler: null
   readonly property var t: app ? app.theme : null
   spacing: t ? t.sp(12) : 12
 
@@ -73,6 +76,7 @@ Row {
         win: av.win
         ws: av.ws
         conv: av.conv
+        msg: av.msg
         parts: av.att ? av.att.parts : []
       }
       Image {
@@ -121,8 +125,8 @@ Row {
           app: av.app
           small: true
           text: modelData.label
-          kind: modelData.style === "primary" ? "primary" : (modelData.style === "danger" ? "danger" : "secondary")
-          onClicked: if (modelData.url) av.app.openUrl(modelData.url)
+          kind: modelData.style === "primary" ? "green" : (modelData.style === "danger" ? "danger" : "secondary")
+          onClicked: if (av.pressHandler) av.pressHandler(modelData); else if (modelData.url) av.app.openUrl(modelData.url)
         }
       }
     }

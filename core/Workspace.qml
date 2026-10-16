@@ -222,7 +222,7 @@ Item {
     "users.channelSections.list", "stars.list", "users.priority.list", "client.counts", "client.userBoot", "client.getWebSocketURL",
     "rtm.connect", "emoji.list", "commands.list", "users.prefs.get", "dnd.info", "dnd.teamInfo", "saved.list", "conversations.history",
     "conversations.replies", "conversations.info", "conversations.members", "conversations.list", "pins.list", "reactions.get",
-    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files"]
+    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list"]
 
   function api(method, params, ok, fail) {
     if (root.readOnlyMode && root.readMethods.indexOf(method) < 0) {
@@ -286,7 +286,10 @@ Item {
       channel_not_found: tr("Channel not found.", "Canal não encontrado."),
       already_in_channel: tr("Already in the channel.", "Já está no canal."),
       ratelimited: tr("Slack asked to slow down. Try again in a moment.", "O Slack pediu para ir com calma. Tente de novo daqui a pouco."),
-      network: tr("No connection to Slack.", "Sem conexão com o Slack.")
+      network: tr("No connection to Slack.", "Sem conexão com o Slack."),
+      app_access_restricted: tr("You don’t have permission to use this app. Contact your workspace admin for access.", "Você não tem permissão para usar este app. Entre em contato com o administrador do workspace para obter acesso."),
+      request_already_resolved: tr("This request has already been handled.", "Esta solicitação já foi atendida."),
+      not_an_admin: tr("You don't have permission to do that.", "Você não tem permissão para isso.")
     }
     if (code.indexOf("network") === 0) return map.network
     return map[code] || code.replace(/_/g, " ")
@@ -1073,6 +1076,12 @@ Item {
     case "star_added": case "star_removed": sectionsSoon.restart(); break
     case "pin_added": case "pin_removed":
       if (e.channel_id || e.item) root.loadPins(e.channel_id || (e.item && e.item.channel))
+      break
+    // An app answering a button of ours with a window (a modal, a dialog):
+    // this app can't draw those yet, so it says where to go.
+    case "view_opened": case "dialog_opened":
+      if (Date.now() - root.actionSentAt < 15000) root.say(tr("This app opened a window that Omaslack can't show yet. Open the message in Slack to continue.",
+                                                              "Este app abriu uma janela que o Omaslack ainda não consegue mostrar. Abra a mensagem no Slack para continuar."))
       break
     default:
       if (String(e.type).indexOf("channel_section") === 0) sectionsSoon.restart()
@@ -2296,6 +2305,76 @@ Item {
 
   // ---------------------------------------------------------------- message actions
   function permalink(conv, m) { return U.permalink(root.team.domain, conv, m.ts, m.threadTs) }
+
+  // An app's buttons, as the official client sends them: Block Kit ones to
+  // blocks.actions, legacy attachment ones to chat.attachmentAction. The app
+  // answers by changing the message (message_changed) or opening a window.
+  property real actionSentAt: 0
+  function clientToken() { return "web-" + Date.now() }
+  function blockAction(conv, m, ctl, done) {
+    var el = ctl.el || {}
+    var act = { action_id: el.action_id || "", block_id: ctl.blockId || "", type: el.type || "button", action_ts: String(Date.now() / 1000) }
+    if (el.text) act.text = el.text
+    if (el.value !== undefined) act.value = el.value
+    if (el.style) act.style = el.style
+    var args = { actions: [act], container: { type: "message", message_ts: m.ts, channel_id: conv, is_ephemeral: !!m.ephemeral },
+                 client_token: root.clientToken() }
+    if (m.botId) args.service_id = m.botId
+    if (m.appId) args.app_id = m.appId
+    root.actionSentAt = Date.now()
+    root.api("blocks.actions", args, function() { if (done) done(true) }, function(err) { root.say(root.errorText(err)); if (done) done(false) })
+  }
+  function attachmentAction(conv, m, ctl, done) {
+    var x = ctl.legacy || {}
+    var act = { id: x.id, name: x.name || "", value: x.value || "", type: x.type || "button" }
+    var payload = { actions: [act], attachment_id: ctl.attachmentId, callback_id: ctl.callbackId, channel_id: conv,
+                    is_ephemeral: !!m.ephemeral, thread_ts: m.threadTs || undefined, message_ts: m.ts, prompt_app_install: false }
+    var args = { payload: JSON.stringify(payload), client_token: root.clientToken() }
+    if (m.botId) args.service_id = m.botId
+    if (m.appId) args.app_id = m.appId
+    if (m.user) args.bot_user_id = m.user
+    root.actionSentAt = Date.now()
+    root.api("chat.attachmentAction", args, function() { if (done) done(true) }, function(err) { root.say(root.errorText(err)); if (done) done(false) })
+  }
+
+  // Slack's app install requests ("Review and Approve for Workspace"): the
+  // button's callback_id is whitelist_<app>_<request>_<team>. The official
+  // client finds the request (admin.apps.requests.list) for its app and
+  // scopes, then approves or restricts it (admin.apps.approve / restrict).
+  function appRequestOf(ctl) {
+    var bits = String(ctl && ctl.callbackId || "").split("_")
+    if (bits[0] !== "whitelist" || bits.length < 4 || bits[2].indexOf("Ar") !== 0) return null
+    return { appId: bits[1], requestId: bits[2], teamId: bits[3] }
+  }
+  function teamArgs(teamId) { return /^E/.test(teamId) ? { enterprise_id: teamId } : { team_id: teamId } }
+  function fetchAppRequest(req, done) {
+    var pages = 0
+    function page(cursor) {
+      var args = U.copy(root.teamArgs(req.teamId))
+      args.app_ids = req.appId
+      args.limit = 1000
+      args.reason = "Fetch approval request for admin resolution from message"
+      if (cursor) args.cursor = cursor
+      root.api("admin.apps.requests.list", args, function(body) {
+        var found = (body.app_requests || []).filter(function(r) { return r.id === req.requestId })[0]
+        if (found) { done(found, ""); return }
+        var next = body.response_metadata && body.response_metadata.next_cursor
+        if (next && ++pages < 10) page(next)
+        else done(null, "")
+      }, function(err) { done(null, err) })
+    }
+    page("")
+  }
+  // scopes: the request's, [{ name, description, token_type }].
+  function resolveAppRequest(req, approve, scopes, done) {
+    var names = function(kind) { return (scopes || []).filter(function(s) { return s.token_type === kind }).map(function(s) { return s.name }).join(",") }
+    var args = U.copy(root.teamArgs(req.teamId))
+    args.request_id = req.requestId
+    args.reason = "make-admin-app-resolution-from-slackbot-message"
+    if (names("user")) args.user_scopes = names("user")
+    if (names("bot")) args.bot_scopes = names("bot")
+    root.api(approve ? "admin.apps.approve" : "admin.apps.restrict", args, function() { done("") }, function(err) { done(err || "error") })
+  }
 
   function togglePin(conv, m) {
     var on = !(m.pinnedTo && m.pinnedTo.indexOf(conv) >= 0)

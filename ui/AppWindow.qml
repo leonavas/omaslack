@@ -361,6 +361,70 @@ FloatingWindow {
       anchors.fill: parent
     }
 
+    // The first time the window opens in the scratchpad: what that layer
+    // is, under the top bar, without standing in the way
+    // (Service.scratchpadHint).
+    BorderSurface {
+      id: scratchpadCard
+      z: 780
+      visible: opacity > 0
+      opacity: appWin.app.scratchpadHint ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: 180 } }
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: topBar.height + appWin.t.sp(14)
+      width: Math.min(appWin.t.sp(500), parent.width - appWin.t.sp(40))
+      height: hintCol.implicitHeight + appWin.t.sp(32)
+      color: appWin.t.popup
+      borderSpec: appWin.t.popupBorder
+      radius: Math.max(8, appWin.t.radiusCard)
+
+      MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+
+      Glyph {
+        id: hintIcon
+        app: appWin.app
+        x: appWin.t.sp(18)
+        y: appWin.t.sp(16)
+        icon: "󰋽"
+        size: appWin.t.fsTitle + 2
+        color: appWin.t.accent
+      }
+      Column {
+        id: hintCol
+        x: hintIcon.x + hintIcon.width + appWin.t.sp(12)
+        y: appWin.t.sp(16)
+        width: scratchpadCard.width - x - appWin.t.sp(18)
+        spacing: appWin.t.sp(12)
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          textFormat: Text.PlainText
+          color: appWin.t.fg
+          font.family: appWin.t.font
+          font.pixelSize: appWin.t.fsText
+          text: appWin.app.tr("Slack opens in the scratchpad, a layer over your workspace. Click the bar icon again to hide it.",
+                              "O Slack abre no scratchpad, uma camada sobre o seu workspace. Clique no ícone da barra de novo para escondê-lo.")
+        }
+        Row {
+          anchors.right: parent.right
+          spacing: appWin.t.sp(8)
+          SButton {
+            app: appWin.app
+            small: true
+            text: appWin.app.tr("Open as a normal window", "Abrir como janela normal")
+            onClicked: appWin.app.dismissScratchpadHint(true)
+          }
+          SButton {
+            app: appWin.app
+            small: true
+            kind: "primary"
+            text: appWin.app.tr("Got it", "Entendi")
+            onClicked: appWin.app.dismissScratchpadHint(false)
+          }
+        }
+      }
+    }
+
     Rectangle {
       id: toastBox
       property string text: ""

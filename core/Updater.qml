@@ -92,10 +92,15 @@ Item {
   // your own (a symlink there) is pulled by itself only when the plugin's
   // folder is the top of the repo and its origin is this repo on GitHub
   // (https or ssh); any other git folder there goes through Omarchy too.
+  // The folder this copy was loaded from may be gone: an update moved a
+  // copy from before the id changed to the new id's folder (lib/update.sh's
+  // migrate_id), and the shell didn't restart; the new one is used then.
+  // Looked at again after each update, so the next one runs from there.
   Process {
     id: where
     command: ["sh", "-c",
-      'd=${1%/}; id=${d##*/}; real=$(readlink -f -- "$d"); plugins=$(readlink -f -- "$HOME/.config/omarchy/plugins")\n' +
+      'd=${1%/}; [ -e "$d" ] || [ -z "$2" ] || [ ! -e "${d%/*}/$2" ] || d=${d%/*}/$2\n' +
+      'id=${d##*/}; real=$(readlink -f -- "$d"); plugins=$(readlink -f -- "$HOME/.config/omarchy/plugins")\n' +
       'origin=$(git -C "$real" remote get-url origin 2>/dev/null); origin=${origin%/}; origin=${origin%.git}\n' +
       'if [ ! -L "$d" ] && [ -d "$d/.git" ] && [ "$real" = "$plugins/$id" ]; then printf "omarchy\\t%s\\t%s\\n" "$id" "$real"\n' +
       'elif top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) && [ "$(readlink -f -- "$top")" = "$real" ] &&\n' +
@@ -103,7 +108,7 @@ Item {
       'then printf "checkout\\t%s\\t%s\\n" "$id" "$real"\n' +
       'elif [ -d "$plugins/$id/.git" ]; then printf "omarchy\\t%s\\t%s\\n" "$id" "$(readlink -f -- "$plugins/$id")"\n' +
       'else printf "other\\t%s\\t%s\\n" "$id" "$real"; fi',
-      "where", u.folderIn]
+      "where", u.folderIn, u.app ? u.app.pluginId : ""]
     stdout: StdioCollector { id: whereOut; waitForEnd: true }
     onExited: {
       var f = String(whereOut.text).trim().split("\t")
@@ -169,7 +174,8 @@ Item {
     if (u.how || !u.pluginId) { u.say(u.how || u.app.tr("Couldn't find where the plugin is installed", "Não foi possível achar onde o plugin está instalado")); return }
     u.phase = "updating"
     u.say(u.app.tr("Confirm the update to " + u.latest + " in the terminal", "Confirme a atualização para " + u.latest + " no terminal"))
-    run.command = ["bash", u.folderIn + "/lib/update.sh", "open", "--mode=" + u.mode, "--id=" + u.pluginId, "--folder=" + u.folder,
+    // The script from the real folder (where), which an update may have moved.
+    run.command = ["bash", (u.folder || u.folderIn) + "/lib/update.sh", "open", "--mode=" + u.mode, "--id=" + u.pluginId, "--folder=" + u.folder,
                    "--from=" + u.version, "--to=" + u.latest, "--base=" + u.base, "--note=" + u.note(u.latest),
                    "--lang=" + u.app.lang, "--repo=" + u.repo]
     run.running = true
@@ -237,6 +243,7 @@ Item {
   Timer { id: pickupTimer; interval: 1000; repeat: true; onTriggered: if (!pickup.running) pickup.running = true }
 
   function outcome(text) {
+    if (!where.running) where.running = true
     var lines = text.split("\n")
     var n = {}
     try { n = JSON.parse(lines[0]) } catch (e) { n = {} }

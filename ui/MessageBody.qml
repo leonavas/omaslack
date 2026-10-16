@@ -188,7 +188,7 @@ Column {
             app: body.app
             small: true
             text: acc.parent.p.accessory.label
-            kind: acc.parent.p.accessory.style === "primary" ? "primary" : (acc.parent.p.accessory.style === "danger" ? "danger" : "secondary")
+            kind: acc.parent.p.accessory.style === "primary" ? "green" : (acc.parent.p.accessory.style === "danger" ? "danger" : "secondary")
             onClicked: body.press(acc.parent.p.accessory)
           }
         }
@@ -258,7 +258,7 @@ Column {
           app: body.app
           small: true
           text: modelData.label
-          kind: modelData.style === "primary" ? "primary" : (modelData.style === "danger" ? "danger" : "secondary")
+          kind: modelData.style === "primary" ? "green" : (modelData.style === "danger" ? "danger" : "secondary")
           onClicked: body.press(modelData)
         }
       }
@@ -289,14 +289,34 @@ Column {
         item.app = body.app; item.win = body.win; item.ws = body.ws; item.conv = body.conv; item.att = p; item.width = Qt.binding(function() { return body.width })
         item.linkHandler = body.link
         item.imageSource = body.imageSource
+        item.pressHandler = body.press
+        item.msg = Qt.binding(function() { return body.msg })
       }
     }
   }
 
-  // Block Kit buttons: their URL, else the message on Slack (this app can't
-  // run another app's actions).
+  // An app's buttons: one with a URL opens it; Slack's app install requests
+  // open the approval window (DlgAppApproval); other buttons go to the app as
+  // the official client sends them (Workspace.blockAction /
+  // attachmentAction). Menus and pickers this app doesn't draw: the message
+  // on Slack.
   function press(ctl) {
-    if (ctl && ctl.url) { body.app.openUrl(ctl.url); return }
-    if (body.msg && body.conv) Qt.openUrlExternally(body.ws.permalink(body.conv, body.msg))
+    if (!ctl) return
+    if (ctl.url) { if (/^https?:\/\//i.test(ctl.url)) body.app.openUrl(ctl.url); return }
+    var m = body.msg
+    if (!m || !body.conv || !body.ws) return
+    if (ctl.legacy) {
+      var req = body.ws.appRequestOf(ctl)
+      if (req) {
+        var named = (m.attachments || []).filter(function(a) { return a.title && String(a.title_link || "").indexOf("/marketplace/" + req.appId) >= 0 })[0]
+        req.appName = named ? named.title : ""
+        body.win.dialog("appApproval", { req: req, approve: ctl.legacy.value === "approved" || ctl.legacy.value === "approved_child_app_auto_install" })
+        return
+      }
+      body.ws.attachmentAction(body.conv, m, ctl)
+      return
+    }
+    if (ctl.el && ctl.el.type === "button") { body.ws.blockAction(body.conv, m, ctl); return }
+    Qt.openUrlExternally(body.ws.permalink(body.conv, m))
   }
 }
