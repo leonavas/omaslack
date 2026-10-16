@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "omaslack",
   "name": "Slack",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": "leonavas",
   "license": "Apache-2.0",
   "description": "Unofficial Slack client inside the Omarchy shell, not affiliated with Slack: sign in with Slack's own page, sidebar sections, channels, DMs, threads, reactions, search, statuses, pauses and several workspaces, drawn in the theme's colors. The bar icon opens it and badges what is waiting.",

@@ -111,6 +111,78 @@ finish() {
   exit "$1"
 }
 
+# ---------------------------------------------------------------- the id
+# A copy installed before the plugin's id changed (leonavas.omaslack, now
+# omaslack) sits in a folder named after the old id, and shell.json puts
+# its widget on the bar by that id: with the new manifest in, the shell
+# knows the plugin by the new one, so the widget would drop off the bar and
+# `omarchy plugin update <id>` would no longer find it. So, after an update
+# Omarchy made (never a checkout of your own), the folder moves to the new
+# id and every mention of the old id in shell.json follows: a backup of it
+# next to it first, then the new file written whole and put in place in one
+# step. Not when a folder by the new name is there already. Anything wrong
+# and nothing is touched; it says how to do it by hand.
+step() {
+  printf '%s\n' "$@"
+  [ -n "$dry" ] || printf '%s\n' "$@" >>"$base.log"
+}
+
+migrate_id() {
+  local plugins=$HOME/.config/omarchy/plugins shell=$HOME/.config/omarchy/shell.json
+  local new src dest backup="" tmp="" manual
+  new=$(jq -r '.id // empty' "$folder/manifest.json" 2>/dev/null)
+  [ -n "$new" ] && [ "$new" != "$id" ] || return 0
+  src=$plugins/$id dest=$plugins/$new
+  # The real file, should shell.json be a link (dotfiles kept elsewhere).
+  [ ! -L "$shell" ] || shell=$(readlink -f -- "$shell")
+  manual=$(t "To do it by hand: mv $src $dest, replace \"$id\" with \"$new\" in $shell, then run omarchy-restart-shell." \
+    "Para fazer à mão: mv $src $dest, troque \"$id\" por \"$new\" em $shell e depois rode omarchy-restart-shell.")
+  echo
+  if ! [[ $new =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $new != *..* ]] || { [ ! -e "$src" ] && [ ! -L "$src" ]; }; then
+    red "$(t "The plugin's id is now $new, but it couldn't be moved by itself." "O id do plugin agora é $new, mas não foi possível movê-lo sozinho.")" "$manual"
+    return 1
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    red "$(t "The plugin's id is now $new, and $dest is there already: nothing was moved." "O id do plugin agora é $new, e $dest já existe: nada foi movido.")" "$manual"
+    return 1
+  fi
+  [ ! -f "$shell" ] || backup=$shell.bak.omaslack-$(date +%Y%m%d-%H%M%S)
+  step "$(t "The plugin's id changed from $id to $new: moving $src to $dest" "O id do plugin mudou de $id para $new: movendo $src para $dest")"
+  [ -z "$backup" ] ||
+    step "$(t "and renaming it in $shell (backup: $backup)" "e renomeando no $shell (cópia: $backup)")"
+
+  # shell.json rewritten beside it before anything moves: the old id as a
+  # whole word (an entry's id, its "<id>#2" copies, a key, a path), in keys
+  # and values alike.
+  if [ -n "$backup" ]; then
+    tmp=$(mktemp -- "$shell.XXXXXX") &&
+      jq --arg pat "(?<![A-Za-z0-9._-])${id//./\\.}(?![A-Za-z0-9._-])" --arg new "$new" '
+        def re: gsub($pat; $new);
+        walk(if type == "object" then with_entries(.key |= re) elif type == "string" then re else . end)' \
+        "$shell" >"$tmp" && jq -e . "$tmp" >/dev/null && chmod --reference="$shell" -- "$tmp" &&
+      cp -p -- "$shell" "$backup" || {
+      [ -z "$tmp" ] || rm -f -- "$tmp"
+      [ -z "$backup" ] || rm -f -- "$backup"
+      red "$(t "Couldn't rewrite $shell: nothing was changed." "Não foi possível reescrever o $shell: nada foi mudado.")" "$manual"
+      return 1
+    }
+  fi
+  if ! mv -T -- "$src" "$dest"; then
+    [ -z "$tmp" ] || rm -f -- "$tmp" "$backup"
+    red "$(t "Couldn't move $src: nothing was changed." "Não foi possível mover $src: nada foi mudado.")" "$manual"
+    return 1
+  fi
+  if [ -n "$tmp" ] && ! mv -f -- "$tmp" "$shell"; then
+    mv -T -- "$dest" "$src"
+    rm -f -- "$tmp" "$backup"
+    red "$(t "Couldn't write $shell: nothing was changed." "Não foi possível gravar o $shell: nada foi mudado.")" "$manual"
+    return 1
+  fi
+  [ -d "$folder" ] || folder=$dest
+  id=$new
+  step "$(t "Moved: Omaslack is now $new, with its place on the bar." "Movido: o Omaslack agora é $new, com o seu lugar na barra.")"
+}
+
 run_update() {
   local cmd shown before after rc now declined=""
   case $mode in
@@ -188,6 +260,11 @@ run_update() {
     t "Update cancelled" "Atualização cancelada"
     echo
     finish 130
+  fi
+
+  # A copy from before the id changed takes the new one, before the restart.
+  if [ "$mode" = omarchy ] && [ "$rc" -eq 0 ] && [ -z "$dry" ] && [ "$before" != "$after" ]; then
+    migrate_id
   fi
 
   # Once it pulled something, the whole shell restarts, as omarchy-update

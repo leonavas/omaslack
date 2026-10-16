@@ -434,10 +434,67 @@ Item {
     root.moveWindow(address, "special:" + root.specialName, true)
   }
 
+  // The workspace under the scratchpad when the focus is in it: the
+  // focused monitor's own (Hyprland lists the special one apart).
   function moveToActive() {
     var address = root.windowAddress()
     var ws = Hyprland.focusedWorkspace ? String(Hyprland.focusedWorkspace.name || "") : ""
+    if (!ws || ws.indexOf("special:") === 0) {
+      var m = Hyprland.focusedMonitor
+      var ipc = m ? m.lastIpcObject : null
+      ws = ipc && ipc["activeWorkspace"] ? String(ipc["activeWorkspace"]["name"] || "") : ""
+    }
     if (address && ws && ws.indexOf("special:") !== 0) root.moveWindow(address, ws, false)
+  }
+
+  // ---------------------------------------------------------------- scratchpad hint
+  // The special workspace is a dimmed layer over the one you're on, which
+  // reads as something broken the first time. So the first time the window
+  // shows there, a card in it says what that is (AppWindow's
+  // `scratchpadCard`): Got it, or Open as a normal window, which turns
+  // "Open in Scratchpad" off in the bar's settings, as its menu does, and
+  // brings the window out onto the workspace you're on. Either one is for
+  // good ("seenScratchpadHint" in settings.json). Only on a first run: a
+  // workspace signed in or a settings.json at start-up is an app used
+  // before, and the card counts as seen (start-up, below).
+  property bool _hintChecked: false
+  property bool _hintDue: false
+  readonly property bool inScratchpad: root.windowOpen && root.parked && root.specialShown
+  onInScratchpadChanged: {
+    if (root.inScratchpad && root._hintChecked && root.barOptions.openInSpecial !== false
+        && root.setting("seenScratchpadHint", false) !== true) root._hintDue = true
+  }
+  readonly property bool scratchpadHint: root._hintDue && root.windowOpen && root.barOptions.openInSpecial !== false
+                                         && root.setting("seenScratchpadHint", false) !== true
+  function dismissScratchpadHint(asWindow) {
+    root._hintDue = false
+    root.setSetting("seenScratchpadHint", true)
+    if (asWindow) root.openAsWindow()
+  }
+  // "Open in Scratchpad" off (the bar widget's setting, in shell.json; here
+  // at once, before the widget hands it back) and the window out of it.
+  function openAsWindow() {
+    var bw = root.barWidget
+    if (bw && typeof bw.writeSetting === "function") bw.writeSetting("openInSpecial", false)
+    var options = U.copy(root.barOptions)
+    options.openInSpecial = false
+    root.barOptions = options
+    if (root.parked) { root.moveToActive(); unparkFix.restart() }
+    else root.raiseSoon()
+  }
+  // A scratchpad that still holds other windows stays on screen over the
+  // workspace the window went to: put away, as it was before Slack opened it.
+  Timer {
+    id: unparkFix
+    interval: 250
+    onTriggered: {
+      var hide = Hyprland.usingLua === true ? "hl.dsp.workspace.toggle_special(" + root.luaString(root.specialName) + ")" : "togglespecialworkspace " + root.specialName
+      Quickshell.execDetached(["bash", "-c",
+        'shown=$(hyprctl monitors -j | jq -r \'.[] | select(.focused) | .specialWorkspace.name\'); '
+        + '[ "$shown" = "special:$1" ] && hyprctl dispatch "$2" >/dev/null; exit 0',
+        "slack-unpark", root.specialName, hide])
+      root.raiseSoon()
+    }
   }
 
   function hyprDispatch(luaForm, legacyForm) {
@@ -929,6 +986,13 @@ Item {
     Qt.callLater(function() {
       var active = root.setting("active", "")
       root.currentTeam = root.accounts.some(function(a) { return a.teamId === active }) ? active : (root.accounts.length ? root.accounts[0].teamId : "")
+      // The scratchpad's card is for a first run: signed in already, or with
+      // settings written before, the app was used and it counts as seen.
+      if (root.settingsLoaded && root.accountsLoaded) {
+        if (!root.demo && root.setting("seenScratchpadHint", null) === null && (root.accounts.length > 0 || Object.keys(root.settings).length > 0))
+          root.setSetting("seenScratchpadHint", true)
+        root._hintChecked = true
+      }
       // Images of files fetched with the session: a week unseen is enough.
       // Their modification time is their last use (reused ones are touched:
       // transport.py's `reuse`, Workspace.openFile), so what you keep

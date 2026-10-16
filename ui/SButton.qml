@@ -1,7 +1,8 @@
 import QtQuick
 import "../lib/Registry.js" as Reg
 
-// Slack's buttons: primary (filled), secondary (outlined), danger, ghost.
+// Slack's buttons: primary (filled), secondary (outlined), danger, ghost;
+// green: an app's primary button (Block Kit style "primary"), green as in Slack.
 // With the keyboard on it (a dialog's default) it wears Slack's focus ring,
 // and Enter or Space clicks it.
 Rectangle {
@@ -15,8 +16,8 @@ Rectangle {
   property bool small: false
   signal clicked()
 
-  readonly property color fill: kind === "primary" ? t.accent : (kind === "danger" ? t.red : "transparent")
-  readonly property color ink: kind === "primary" || kind === "danger" ? t.onColor(fill) : t.fg
+  readonly property color fill: kind === "primary" ? t.accent : (kind === "danger" ? t.red : (kind === "green" ? t.green : "transparent"))
+  readonly property color ink: kind === "primary" || kind === "danger" || kind === "green" ? t.onColor(fill) : t.fg
 
   implicitHeight: t.sp(small ? 28 : 34)
   implicitWidth: Math.max(t.sp(small ? 56 : 80), row.implicitWidth + t.sp(small ? 20 : 28))
