@@ -27,14 +27,17 @@ Item {
   signal clicked()
 
   readonly property var u: ws && user ? ws.user(user) : null
-  readonly property string src: url !== "" ? url : (u ? (a.big ? (u.avatar192 || u.avatar || "") : (u.avatar || "")) : "")
+  // "Slack" (its system notices): the logo on its own, as Slack draws it,
+  // not the square photo its user has.
+  readonly property bool slack: user === "USLACK"
+  readonly property string src: slack ? Qt.resolvedUrl("../assets/slack.svg") : url !== "" ? url : (u ? (a.big ? (u.avatar192 || u.avatar || "") : (u.avatar || "")) : "")
   readonly property string label: name !== "" ? name : (u ? u.name : "")
-  readonly property string photo: a.src !== "" ? (a.app.photoFile(a.src) || a.src) : ""
+  readonly property string photo: a.slack ? a.src : a.src !== "" ? (a.app.photoFile(a.src) || a.src) : ""
   // Another size of their photo already on disk, for while this one loads
   // (or if it doesn't come). Not an app's icon over its bot user's photo.
   readonly property string stand: {
     if (img.status !== Image.Loading && img.status !== Image.Error) return ""
-    if (!a.u || (a.url !== "" && [a.u.avatar, a.u.avatar192, a.u.avatar512, a.u.photo].indexOf(a.url) < 0)) return ""
+    if (a.slack || !a.u || (a.url !== "" && [a.u.avatar, a.u.avatar192, a.u.avatar512, a.u.photo].indexOf(a.url) < 0)) return ""
     var sizes = [a.u.avatar192, a.u.avatar, a.u.avatar512]
     for (var i = 0; i < sizes.length; i++) {
       var f = sizes[i] && sizes[i] !== a.src ? a.app.photoFile(sizes[i], true) : ""
@@ -74,7 +77,7 @@ Item {
     radius: Math.round(a.size * a.round)
     // Their color, under the photo too (an app's icon may be see-through);
     // none in the moment before.
-    color: a.shown || a.initialsUp ? Qt.hsla(U.hue(a.user || a.label), 0.45, a.t.dark ? 0.38 : 0.62, 1) : "transparent"
+    color: a.slack ? "transparent" : a.shown || a.initialsUp ? Qt.hsla(U.hue(a.user || a.label), 0.45, a.t.dark ? 0.38 : 0.62, 1) : "transparent"
 
     Text {
       anchors.centerIn: parent
@@ -111,13 +114,14 @@ Item {
       Image {
         id: img
         anchors.fill: parent
+        anchors.margins: a.slack ? Math.round(a.size * 0.06) : 0
         source: a.photo
         // From disk on the spot, so one at hand is never a frame late; a
         // file the caller picked (any size: a new photo) aside. One from
         // Slack always comes aside.
         asynchronous: a.url.indexOf("file:") === 0
         cache: true
-        fillMode: Image.PreserveAspectCrop
+        fillMode: a.slack ? Image.PreserveAspectFit : Image.PreserveAspectCrop
         sourceSize.width: a.px
         sourceSize.height: a.px
         smooth: true
@@ -128,7 +132,7 @@ Item {
   }
 
   PresenceDot {
-    visible: a.showPresence && a.u && !a.u.bot
+    visible: a.showPresence && !a.slack && a.u && !a.u.bot
     app: a.app
     anchors.right: parent.right
     anchors.bottom: parent.bottom

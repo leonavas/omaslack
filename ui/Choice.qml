@@ -8,7 +8,12 @@ Column {
   readonly property var t: app.theme
   property var options: []      // [{value, label, hint}]
   property var value: null
+  // An optional small button at the end of each row whose option has
+  // `action: true` (the notification sound's preview).
+  property string actionIcon: ""
+  property string actionTip: ""
   signal picked(var value)
+  signal action(var value)
   spacing: t.sp(4)
 
   Repeater {
@@ -35,7 +40,7 @@ Column {
         id: body
         anchors.left: dot.right
         anchors.leftMargin: c.t.sp(10)
-        anchors.right: parent.right
+        anchors.right: act.visible ? act.left : parent.right
         anchors.rightMargin: c.t.sp(10)
         anchors.verticalCenter: parent.verticalCenter
         spacing: 2
@@ -43,6 +48,18 @@ Column {
         Text { visible: !!modelData.hint; text: modelData.hint || ""; textFormat: Text.PlainText; color: c.t.fgDim; font.family: c.t.font; font.pixelSize: c.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
       }
       MouseArea { id: ma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { c.value = modelData.value; c.picked(modelData.value) } }
+      IconButton {
+        id: act
+        app: c.app
+        visible: c.actionIcon !== "" && modelData.action === true
+        anchors.right: parent.right
+        anchors.rightMargin: c.t.sp(4)
+        anchors.verticalCenter: parent.verticalCenter
+        size: c.t.sp(26)
+        icon: c.actionIcon
+        tip: c.actionTip
+        onClicked: c.action(modelData.value)
+      }
     }
   }
 }
