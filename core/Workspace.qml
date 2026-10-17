@@ -1465,10 +1465,16 @@ Item {
   }
 
   onFocusedChanged: {
-    if (root.focused && root.current && root.view === "conv") {
+    if (!root.focused) return
+    if (root.current && root.view === "conv") {
       var k = root.counts[root.current]
       if (k && (k.unread || k.mentions)) root.markRead(root.current, true)
     }
+    // A thread open (from a reply's notification) whose replies came in
+    // before the window had the focus.
+    var th = root.thread
+    var r = th ? root.replies[th.conv + "/" + th.ts] : null
+    if (r && !r.loading && r.msgs.length > 1) root.markThread(th.conv, th.ts, r.msgs[r.msgs.length - 1].ts)
   }
 
   // ---------------------------------------------------------------- navigation
@@ -1527,7 +1533,7 @@ Item {
       else root.fetchAround(convId, opts.ts)
     } else if (!h || h.detached || cached) root.fetchHistory(convId, "initial")
     else root.fetchHistory(convId, "poll")
-    if (root.focused && k && (k.unread || k.mentions > 0)) { k.unread = false; k.mentions = 0; root.countsRev++ }
+    if (root.focused && k && (k.unread || k.mentions > 0)) root.markRead(convId)
     root.loadPins(convId)
     var c = root.convs[convId]
     if (c && (c.kind === "channel" || c.kind === "private")) {
@@ -1666,6 +1672,7 @@ Item {
         delete root.fromCache[conv]
         root.setHistory(conv, { msgs: msgs, noOlder: before.length < root.pageSize, loading: false, detached: !present })
         root.jumpTo(conv, ts)
+        if (conv === root.current && root.view === "conv" && root.focused) root.markRead(conv, true)
       }, function() {
         delete root.fromCache[conv]
         root.setHistory(conv, { msgs: before, noOlder: before.length < root.pageSize, loading: false, detached: true })
@@ -1816,9 +1823,10 @@ Item {
     var k = root.counts[conv]
     var ts = ""
     if (h && h.msgs.length && !h.detached) ts = h.msgs.filter(function(m) { return !m.pending && !m.ephemeral }).map(function(m) { return m.ts }).pop() || ""
-    // The cache's messages can be behind: marking there would unread the rest.
-    if (root.fromCache[conv]) ts = k && k.latest ? (ts && U.cmpTs(ts, k.latest) > 0 ? ts : k.latest) : ""
-    if (!ts && k) ts = k.latest
+    // Never behind what the counts know (marking there would unread the
+    // rest); the cache's messages alone can be, so they don't count.
+    if (root.fromCache[conv] && !(k && k.latest)) ts = ""
+    else if (k && k.latest && (!ts || U.cmpTs(k.latest, ts) > 0)) ts = k.latest
     if (!ts) return
     if (onlyIfNewer && k && k.lastRead && U.cmpTs(k.lastRead, ts) >= 0 && !k.unread && !k.mentions) return
     if (k) { k.unread = false; k.mentions = 0; k.lastRead = ts; root.countsRev++ }
