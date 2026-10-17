@@ -36,7 +36,7 @@ BarWidget {
   readonly property bool tintWhenUnread: setting("tintWhenUnread", false) === true
   readonly property string hideMode: String(setting("hideMode", "Special workspace"))
   readonly property string specialName: String(setting("specialWorkspace", "scratchpad"))
-  readonly property bool openInSpecial: setting("openInSpecial", true) !== false
+  readonly property bool openInSpecial: setting("openInSpecial", false) === true
   readonly property bool autoStart: setting("autoStart", false) === true
   readonly property bool launchForeground: setting("launchForeground", true) !== false
   readonly property bool dimWhenClosed: setting("dimWhenClosed", true) !== false
@@ -348,7 +348,7 @@ BarWidget {
       : root.iconStyle === "Color" ? colorIcon : outlineIcon
     active: root.anyBadge
     useActiveColor: root.tintWhenUnread
-    dimmed: (root.notSignedIn && root.dimWhenClosed) || (root.muted && root.mutedIndicator === "Dim")
+    dimmed: ((root.notSignedIn || !root.running) && root.dimWhenClosed) || (root.muted && root.mutedIndicator === "Dim")
     tooltipText: root.previewAvailable ? "" : root.tooltip
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.MiddleButton) {

@@ -70,7 +70,7 @@ omarchy plugin add https://github.com/leonavas/omaslack --enable
 
 That's all. On a stock Omarchy it works right after install, with no extra packages and no manual setup: Slack's mark shows up in the bar, and you sign in from inside the app (see [How sign-in works](#how-sign-in-works)). To add more workspaces, click the workspace icon in the rail and choose **Add a workspace**.
 
-The window opens in the scratchpad by default, a layer over your current workspace; a click on the bar icon shows or hides it. To have it open as a normal window instead, turn off **Open in Scratchpad** in the bar icon's right-click menu.
+The window opens as a normal window by default. Turn on **Open in Scratchpad** in the bar icon's right-click menu to have it live in the scratchpad instead, a layer over your current workspace; a click on the bar icon then shows or hides it.
 
 ### Requirements
 

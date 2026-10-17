@@ -278,7 +278,7 @@ Item {
   // with "Open in Scratchpad" goes straight there, and one opened in the
   // background (Launch in Foreground off) is born there, unseen. Closing it
   // (hideWindow) unmaps it; the app keeps counting and notifying either way.
-  property var barOptions: ({ specialName: "scratchpad", openInSpecial: true, hideMode: "Special workspace", launchForeground: true })
+  property var barOptions: ({ specialName: "scratchpad", openInSpecial: false, hideMode: "Special workspace", launchForeground: true })
   property bool autoStarted: false
   // Without what would split a hyprctl command (`;` between batch commands,
   // `,` between a dispatcher's arguments) or a line.
@@ -298,10 +298,12 @@ Item {
 
   function showWindow() {
     if (!root.windowOpen) { root.launchWindow(true); return }
-    if (root.parked) {
-      if (root.barOptions.openInSpecial !== false) { if (!root.specialShown) root.toggleSpecial() }
-      else root.moveToActive()
-    }
+    if (root.barOptions.openInSpecial === true) {
+      // Out on a workspace (opened before "Open in Scratchpad" was on, or
+      // moved there): into the scratchpad, not silent, so it opens with it.
+      if (!root.parked) { var address = root.windowAddress(); if (address) root.moveWindow(address, "special:" + root.specialName, false) }
+      else if (!root.specialShown) root.toggleSpecial()
+    } else if (root.parked) root.moveToActive()
     root.raiseSoon()
   }
   function hideWindow() { root._launchPending = false; root.endLaunch(); root.windowOpen = false }
@@ -309,8 +311,7 @@ Item {
   function toggleWindow() {
     if (!root.windowOpen) root.launchWindow(root.barOptions.launchForeground !== false)
     else if (root.windowFocused && root.barOptions.hideMode === "Special workspace") root.park()
-    else if (root.parked) root.showWindow()
-    else root.raiseSoon()
+    else root.showWindow()
   }
 
   // A Quickshell window maps where Hyprland's window rules send it, so one
@@ -339,7 +340,7 @@ Item {
     root._launchWorkspace = ""
     root._ourAddress = ""
     root.stowing = !foreground
-    if (foreground && root.barOptions.openInSpecial === false) { root.mapLaunch(); return }
+    if (foreground && root.barOptions.openInSpecial !== true) { root.mapLaunch(); return }
     root.launchTitle = "omaslack-launch-" + Math.random().toString(36).slice(2, 10)
     root._launchPending = true
     launchRuleProc.command = Hyprland.usingLua === true
@@ -410,7 +411,7 @@ Item {
       if (!root._launchForeground) {
         if (there) stowEnd.restart()
         else { root.moveWindow(address, special, true); backgroundFix.restart() }
-      } else if (root.barOptions.openInSpecial !== false) {
+      } else if (root.barOptions.openInSpecial === true) {
         // Not silent: the scratchpad opens with it.
         if (!there) root.moveWindow(address, special, false)
         root.raiseSoon()
@@ -476,10 +477,10 @@ Item {
   property bool _hintDue: false
   readonly property bool inScratchpad: root.windowOpen && root.parked && root.specialShown
   onInScratchpadChanged: {
-    if (root.inScratchpad && root._hintChecked && root.barOptions.openInSpecial !== false
+    if (root.inScratchpad && root._hintChecked && root.barOptions.openInSpecial === true
         && root.setting("seenScratchpadHint", false) !== true) root._hintDue = true
   }
-  readonly property bool scratchpadHint: root._hintDue && root.windowOpen && root.barOptions.openInSpecial !== false
+  readonly property bool scratchpadHint: root._hintDue && root.windowOpen && root.barOptions.openInSpecial === true
                                          && root.setting("seenScratchpadHint", false) !== true
   function dismissScratchpadHint(asWindow) {
     root._hintDue = false
