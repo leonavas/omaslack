@@ -10,6 +10,9 @@ skin tones) is generated from the following projects, both under the MIT
 License. No emoji images are bundled; they are loaded from Slack's CDN at
 runtime.
 
+Notification sounds (assets/sounds/*.oga) generated with ElevenLabs Sound
+Effects and edited for Omaslack; distributed under the project license.
+
 --------------------------------------------------------------------------
 iamcal/emoji-data
 https://github.com/iamcal/emoji-data

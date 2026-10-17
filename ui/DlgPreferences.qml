@@ -157,14 +157,40 @@ DialogFrame {
         checked: d.app.notificationsOn
         onToggled: on => d.app.setNotifySetting("notifications", on)
       }
-      Switch2 {
-        app: d.app
+      // The sound with each notification (app.notifySound); picking one, or
+      // its play button, plays it once.
+      Column {
         width: parent.width
+        spacing: d.t.sp(8)
         opacity: d.app.notificationsOn ? 1 : 0.45
-        text: d.app.tr("Play a sound", "Tocar um som")
-        hint: d.app.tr("A short sound with each notification.", "Um som curto a cada notificação.")
-        checked: d.app.setting("sound", true) !== false
-        onToggled: on => d.app.setSetting("sound", on)
+        Column {
+          width: parent.width
+          spacing: 2
+          Text { text: d.app.tr("Notification sound", "Som de notificação"); color: d.t.fg; font.family: d.t.font; font.pixelSize: d.t.fsText; width: parent.width; wrapMode: Text.Wrap }
+          Text { text: d.app.tr("Played with each notification.", "Tocado a cada notificação."); color: d.t.fgDim; font.family: d.t.font; font.pixelSize: d.t.fsSmall; width: parent.width; wrapMode: Text.Wrap }
+        }
+        Choice {
+          app: d.app
+          width: parent.width
+          value: d.app.notifySound
+          actionIcon: "󰐊"
+          actionTip: d.app.tr("Play", "Tocar")
+          options: [
+            { value: "none", label: d.app.tr("None", "Nenhum") },
+            { value: "glass-chime", label: d.app.tr("Glass chime", "Sino de vidro"), action: true },
+            { value: "synth-pluck", label: d.app.tr("Synth pluck", "Sintetizador"), action: true },
+            { value: "kalimba-tap", label: d.app.tr("Kalimba tap", "Kalimba"), action: true },
+            { value: "crystal-ping", label: d.app.tr("Crystal ping", "Ping de cristal"), action: true },
+            { value: "mention", label: d.app.tr("Mention", "Menção"), action: true },
+            { value: "droplet", label: d.app.tr("Droplet", "Gota"), action: true },
+            { value: "vibraphone", label: d.app.tr("Vibraphone", "Vibrafone"), action: true },
+            { value: "wood-blocks", label: d.app.tr("Wood blocks", "Blocos de madeira"), action: true },
+            { value: "retro-blip", label: d.app.tr("Retro blip", "Blip retrô"), action: true },
+            { value: "paper-chime", label: d.app.tr("Paper chime", "Sino de papel"), action: true }
+          ]
+          onPicked: v => { d.app.setSetting("notifySound", v); d.app.playSound(v) }
+          onAction: v => d.app.playSound(v)
+        }
       }
       Switch2 {
         app: d.app

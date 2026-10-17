@@ -55,7 +55,22 @@ Item {
                                                                                      : setting("notifications", true) !== false
   readonly property bool previewOn: root.barOptions.notificationText !== undefined ? root.barOptions.notificationText !== false
                                                                                    : setting("notificationPreview", true) !== false
-  readonly property bool soundOn: setting("sound", true) !== false
+  // The notification sound: "none" or one of the bundled assets/sounds/<id>.oga.
+  // Unset, the old on/off switch ("sound") decides: off is "none".
+  readonly property var notifySounds: ["glass-chime", "synth-pluck", "kalimba-tap", "crystal-ping", "mention",
+                                       "droplet", "vibraphone", "wood-blocks", "retro-blip", "paper-chime"]
+  readonly property string notifySound: {
+    var v = setting("notifySound", null)
+    if (v === null) return setting("sound", true) === false ? "none" : "glass-chime"
+    return v === "none" || root.notifySounds.indexOf(v) >= 0 ? v : "glass-chime"
+  }
+  // Plays a sound with pw-play (Preferences' preview too); the freedesktop
+  // one when the bundled file is missing.
+  function playSound(id) {
+    if (!id || id === "none") return
+    Quickshell.execDetached(["sh", "-c", 'for f in "$1" /usr/share/sounds/freedesktop/stereo/message-new-instant.oga /usr/share/sounds/freedesktop/stereo/message.oga; do [ -f "$f" ] && exec pw-play "$f"; done; exit 0',
+                             "sh", root.pluginDir + "/assets/sounds/" + id + ".oga"])
+  }
   // The bar widget that writes its settings (shell.json), set while one is
   // on the bar.
   property var barWidget: null
@@ -817,9 +832,9 @@ Item {
     var open = info.threadTs ? ["omarchy-shell", "-q", "omaslack", "openThread", String(info.team), String(info.conv), String(info.ts), String(info.threadTs)]
                              : ["omarchy-shell", "-q", "omaslack", "openAt", String(info.team), String(info.conv), String(info.ts)]
     root.sendNotification(title, body, photo, open)
-    if (root.soundOn && Date.now() - root._lastSound > 1500) {
+    if (root.notifySound !== "none" && Date.now() - root._lastSound > 1500) {
       root._lastSound = Date.now()
-      Quickshell.execDetached(["sh", "-c", 'for f in /usr/share/sounds/freedesktop/stereo/message-new-instant.oga /usr/share/sounds/freedesktop/stereo/message.oga; do [ -f "$f" ] && exec pw-play "$f"; done; exit 0'])
+      root.playSound(root.notifySound)
     }
   }
 

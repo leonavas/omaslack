@@ -171,7 +171,7 @@ It does not end the session on Slack's servers: do that from your account settin
 
 ## Settings
 
-- **App preferences** (Ctrl+, or the menu): notifications, sound and message preview, sidebar look, workspaces stacked or expanded, clock, spacing, emoji style, the formatting toolbar, images from link previews, language, zoom, update checks, your workspaces, and where the app keeps its data.
+- **App preferences** (Ctrl+, or the menu): notifications, the notification sound (none or one of ten bundled sounds, each with a play button to preview it) and message preview, sidebar look, workspaces stacked or expanded, clock, spacing, emoji style, the formatting toolbar, images from link previews, language, zoom, update checks, your workspaces, and where the app keeps its data.
 - **Bar widget settings** are in the shell's widget settings panel. You can also set them inline on the widget's entry in `~/.config/omarchy/shell.json`, for example:
 
   ```json
@@ -235,5 +235,7 @@ Working on Omaslack itself is described in [docs/DEVELOPMENT.md](docs/DEVELOPMEN
 Made by [leonavas](https://github.com/leonavas). Licensed under the [Apache License 2.0](LICENSE).
 
 Emoji images are loaded from Slack's CDN at runtime; none are bundled. The emoji metadata in `lib/EmojiData.js` (names, aliases, groups, order and skin tones) comes from [iamcal/emoji-data](https://github.com/iamcal/emoji-data), the set Slack uses, and [github/gemoji](https://github.com/github/gemoji), both under the MIT license (see [NOTICE](NOTICE)).
+
+Notification sounds generated with ElevenLabs Sound Effects and edited for Omaslack; distributed under the project license.
 
 Omaslack is an **unofficial** Slack client. It is not affiliated with, endorsed by or sponsored by Slack Technologies, LLC or Salesforce, Inc. "Slack" and the Slack logo are trademarks of Slack Technologies, LLC. Use it in line with your workspace's policies.
