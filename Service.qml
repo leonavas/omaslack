@@ -100,6 +100,25 @@ Item {
 
   Timer { id: saveSettingsSoon; interval: 600; onTriggered: settingsFile.setText(JSON.stringify(root.settings, null, 2)) }
 
+  // The workspace in front and the scratchpad card's first-run check wait
+  // for both files: they can still be loading when the app is complete,
+  // and a currentTeam left empty shows the first workspace while none
+  // counts as in front (nothing would be marked read).
+  readonly property bool filesLoaded: root.settingsLoaded && root.accountsLoaded
+  onFilesLoadedChanged: if (root.ready) root.startUp()
+  property bool _startedUp: false
+  function startUp() {
+    if (root._startedUp || !root.filesLoaded) return
+    root._startedUp = true
+    var active = root.setting("active", "")
+    root.currentTeam = root.accounts.some(function(a) { return a.teamId === active }) ? active : (root.accounts.length ? root.accounts[0].teamId : "")
+    // The scratchpad's card is for a first run: signed in already, or with
+    // settings written before, the app was used and it counts as seen.
+    if (!root.demo && root.setting("seenScratchpadHint", null) === null && (root.accounts.length > 0 || Object.keys(root.settings).length > 0))
+      root.setSetting("seenScratchpadHint", true)
+    root._hintChecked = true
+  }
+
   function teamSetting(team, key, fallback) {
     var t = (root.settings.teams || {})[team] || {}
     return t[key] === undefined ? fallback : t[key]
@@ -1000,15 +1019,7 @@ Item {
     Registry.service = root
     root.ready = true
     Qt.callLater(function() {
-      var active = root.setting("active", "")
-      root.currentTeam = root.accounts.some(function(a) { return a.teamId === active }) ? active : (root.accounts.length ? root.accounts[0].teamId : "")
-      // The scratchpad's card is for a first run: signed in already, or with
-      // settings written before, the app was used and it counts as seen.
-      if (root.settingsLoaded && root.accountsLoaded) {
-        if (!root.demo && root.setting("seenScratchpadHint", null) === null && (root.accounts.length > 0 || Object.keys(root.settings).length > 0))
-          root.setSetting("seenScratchpadHint", true)
-        root._hintChecked = true
-      }
+      root.startUp()
       // Images of files fetched with the session: a week unseen is enough.
       // Their modification time is their last use (reused ones are touched:
       // transport.py's `reuse`, Workspace.openFile), so what you keep
