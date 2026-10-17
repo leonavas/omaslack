@@ -22,7 +22,8 @@ Item {
   readonly property string teamId: account.teamId || ""
   readonly property string lang: app ? app.lang : "en"
   readonly property bool clock24: app ? app.clock24 : true
-  readonly property bool foreground: app ? app.currentTeam === root.teamId : true
+  // The one on screen (the app falls back to the first while none is picked).
+  readonly property bool foreground: app ? app.current === root : true
   readonly property bool focused: app ? (app.windowFocused && foreground) : false
 
   // ---------------------------------------------------------------- status
