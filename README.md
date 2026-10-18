@@ -34,7 +34,7 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 
 - **Icon**: Slack's mark, white with a faint outline by default. Color, Mono or any Nerd Font glyph are also available. It's dimmed while you're signed out.
 - **Badges**: the red one (bottom-right) counts unread DMs and group DMs, plus thread replies that mention you. The blue one (top-right) counts channel mentions, unread channels that notify you, and new replies in threads you follow. *Group notifications* folds both into one badge.
-- **Hover preview**: unread conversations with their newest messages (rendered with Slack's formatting and emoji), followed threads with new replies, and the reactions people put on your messages. Click a row to jump there.
+- **Hover preview**: unread conversations with their newest messages (rendered with Slack's formatting and emoji), followed threads with new replies, and the reactions people put on your messages. Click a row to jump there; middle-click a conversation or thread to mark it read.
 - **Desktop notifications**: one for each message that notifies you in Slack and for each reaction to your messages, with the sender's photo. They're skipped while you're paused, and for the conversation you have on screen. Clicking one opens the conversation at that message, through Omarchy's notification center.
 - **Reaction emoji float up** out of the bar icon whenever someone reacts to one of your messages.
 - **Scratchpad parking**: the window lives in a Hyprland special workspace (Omarchy's scratchpad by default). One click shows it and another puts it away.

@@ -199,6 +199,64 @@ BarWidget {
     if (root.service) root.service.openConversation(row.team, row.id, row.ts, row.threadTs)
   }
 
+  // Middle click on a row of the card marks it read: the row goes first
+  // (CardRow), then the read goes out, whether or not the card is still
+  // open. The rows are made again whenever the state moves, so the ones
+  // going are kept here by key: one made again meanwhile comes back gone.
+  property var readLeaving: ({})
+  property int readLeavingRev: 0
+  property var readPending: []
+
+  function readKey(row, thread) {
+    return (thread ? "thread/" : "conv/") + row.team + "/" + row.id + (thread ? "/" + row.threadTs : "")
+  }
+
+  function markRowRead(row, thread) {
+    var key = root.readKey(row, thread)
+    if (root.readLeaving[key]) return false
+    root.readLeaving[key] = true
+    root.readLeavingRev++
+    root.readPending.push({ key: key, row: row, thread: thread })
+    commitReadTimer.restart()
+    return true
+  }
+
+  function commitReads() {
+    var list = root.readPending
+    root.readPending = []
+    var all = root.service ? root.service.workspaces : []
+    list.forEach(function(p) {
+      var w = all.filter(function(x) { return x && x.teamId === p.row.team })[0]
+      if (!w) return
+      if (p.thread) w.markThread(p.row.id, p.row.threadTs, p.row.latest)
+      else w.markRead(p.row.id)
+    })
+    // A conversation is read at once (its row is gone by now, or back if
+    // the read didn't take); a thread once Slack answers, so its key stays
+    // a while longer.
+    list.forEach(function(p) { if (!p.thread) delete root.readLeaving[p.key] })
+    root.readLeavingRev++
+    readSweepTimer.restart()
+  }
+
+  // After the row's going (CardRow.goAnim).
+  Timer {
+    id: commitReadTimer
+    interval: 640
+    onTriggered: root.commitReads()
+  }
+
+  // A thread Slack didn't mark read comes back.
+  Timer {
+    id: readSweepTimer
+    interval: 4000
+    onTriggered: {
+      var pending = root.readPending.map(function(p) { return p.key })
+      for (var key in root.readLeaving) if (pending.indexOf(key) < 0) delete root.readLeaving[key]
+      root.readLeavingRev++
+    }
+  }
+
   function pause(minutes) { if (root.service) root.service.pauseAll(Math.max(1, Math.round(minutes))) }
   function resume() { if (root.service) root.service.resumeAll() }
 
@@ -852,6 +910,80 @@ BarWidget {
     // Several workspaces: each row says which one it is from.
     readonly property bool manyTeams: !!root.service && root.service.workspaces.length > 1
 
+    // An unread row of the card: a click opens it, a middle click marks it
+    // read (root.markRowRead) and it is seen go: its unread mark turns into
+    // a check over a tint of its color, then it slides out to the right and
+    // closes up. Its content follows `slid` (opacity and slide).
+    component CardRow: Rectangle {
+      id: cardRow
+
+      required property var modelData
+      property bool thread: false
+      property color tint: root.channelColor
+      property real bodyHeight: 0
+
+      readonly property int indent: Math.round(Style.font.bodySmall * 1.5)
+      readonly property string readKey: root.readKey(cardRow.modelData, cardRow.thread)
+      readonly property bool leaving: root.readLeavingRev >= 0 && !!root.readLeaving[cardRow.readKey]
+      // How far along the going is: the check, the slide out, the closing up.
+      property real checked: 0
+      property real slid: 0
+      property real folded: 0
+      readonly property real slideX: Math.round(cardRow.slid * Style.space(40))
+
+      width: previewColumn.width
+      height: Math.round((cardRow.bodyHeight + Style.space(12)) * (1 - cardRow.folded))
+      visible: cardRow.folded < 1
+      clip: cardRow.folded > 0
+      radius: Style.spacing.labelGap
+      color: cardRow.checked > 0
+        ? Qt.rgba(cardRow.tint.r, cardRow.tint.g, cardRow.tint.b, 0.2 * Math.min(1, cardRow.checked) * (1 - cardRow.slid))
+        : cardArea.containsMouse ? Qt.rgba(popup.fg.r, popup.fg.g, popup.fg.b, 0.08) : "transparent"
+
+      // Made again while going: it stays gone. Its key dropped with the row
+      // still here (the read didn't take): it comes back.
+      Component.onCompleted: if (cardRow.leaving) { cardRow.checked = 1; cardRow.slid = 1; cardRow.folded = 1 }
+      onLeavingChanged: if (!cardRow.leaving) { goAnim.stop(); cardRow.checked = 0; cardRow.slid = 0; cardRow.folded = 0 }
+
+      SequentialAnimation {
+        id: goAnim
+        NumberAnimation { target: cardRow; property: "checked"; to: 1; duration: 180; easing.type: Easing.OutBack }
+        PauseAnimation { duration: 110 }
+        NumberAnimation { target: cardRow; property: "slid"; to: 1; duration: 190; easing.type: Easing.InCubic }
+        NumberAnimation { target: cardRow; property: "folded"; to: 1; duration: 150; easing.type: Easing.InOutQuad }
+      }
+
+      MouseArea {
+        id: cardArea
+        anchors.fill: parent
+        z: 1
+        hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+        cursorShape: Qt.PointingHandCursor
+        onClicked: function (mouse) {
+          if (cardRow.leaving) return
+          if (mouse.button !== Qt.MiddleButton) root.openConversation(cardRow.modelData)
+          else if (root.markRowRead(cardRow.modelData, cardRow.thread)) goAnim.start()
+        }
+      }
+    }
+
+    // The check a row's unread mark turns into as the row is marked read,
+    // set over that mark.
+    component ReadCheck: Text {
+      property Item row: null
+      readonly property real progress: row ? row.checked : 0
+      visible: progress > 0
+      opacity: Math.min(1, progress)
+      scale: 0.4 + 0.6 * progress
+      textFormat: Text.PlainText
+      text: "󰄬"
+      color: row ? row.tint : popup.fg
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+    }
+
     // Signed out: what is missing and the way to it.
     Column {
       id: signInColumn
@@ -1001,17 +1133,10 @@ BarWidget {
       Repeater {
         model: root.preview.rows
 
-        Rectangle {
+        CardRow {
           id: convRow
-          required property var modelData
-
-          width: previewColumn.width
-          height: convInner.implicitHeight + Style.space(12)
-          radius: Style.spacing.labelGap
-          color: rowArea.containsMouse
-            ? Qt.rgba(popup.fg.r, popup.fg.g, popup.fg.b, 0.08) : "transparent"
-
-          readonly property int indent: Math.round(Style.font.bodySmall * 1.5)
+          bodyHeight: convInner.implicitHeight
+          tint: marker.direct ? root.directColor : root.channelColor
 
           Column {
             id: convInner
@@ -1021,6 +1146,8 @@ BarWidget {
             anchors.leftMargin: Style.space(6)
             anchors.rightMargin: Style.space(6)
             spacing: Style.space(3)
+            opacity: 1 - convRow.slid
+            transform: Translate { x: convRow.slideX }
 
             Item {
               width: parent.width
@@ -1066,6 +1193,7 @@ BarWidget {
                 radius: height / 2
                 readonly property bool direct: convRow.modelData.kind === "dm" || convRow.modelData.kind === "group"
                 color: direct ? root.directColor : hasCount ? root.channelColor : popup.dim
+                opacity: 1 - Math.min(1, convRow.checked)
                 anchors.right: timeText.left
                 anchors.rightMargin: timeText.text !== "" ? Style.space(8) : 0
                 anchors.verticalCenter: nameText.verticalCenter
@@ -1079,6 +1207,11 @@ BarWidget {
                   font.pixelSize: Style.font.caption
                   font.bold: true
                 }
+              }
+
+              ReadCheck {
+                row: convRow
+                anchors.centerIn: marker
               }
 
               Text {
@@ -1127,14 +1260,6 @@ BarWidget {
               }
             }
           }
-
-          MouseArea {
-            id: rowArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.openConversation(convRow.modelData)
-          }
         }
       }
 
@@ -1165,17 +1290,11 @@ BarWidget {
       Repeater {
         model: root.threads.rows
 
-        Rectangle {
+        CardRow {
           id: threadRow
-          required property var modelData
-
-          width: previewColumn.width
-          height: threadInner.implicitHeight + Style.space(12)
-          radius: Style.spacing.labelGap
-          color: threadArea.containsMouse
-            ? Qt.rgba(popup.fg.r, popup.fg.g, popup.fg.b, 0.08) : "transparent"
-
-          readonly property int indent: Math.round(Style.font.bodySmall * 1.5)
+          thread: true
+          bodyHeight: threadInner.implicitHeight
+          tint: threadMarker.color
 
           Column {
             id: threadInner
@@ -1185,6 +1304,8 @@ BarWidget {
             anchors.leftMargin: Style.space(6)
             anchors.rightMargin: Style.space(6)
             spacing: Style.space(3)
+            opacity: 1 - threadRow.slid
+            transform: Translate { x: threadRow.slideX }
 
             Item {
               width: parent.width
@@ -1227,6 +1348,7 @@ BarWidget {
                 height: hasCount ? threadCount.implicitHeight + Style.space(2) : width
                 radius: height / 2
                 color: threadRow.modelData.mention ? root.directColor : root.channelColor
+                opacity: 1 - Math.min(1, threadRow.checked)
                 anchors.right: threadTime.left
                 anchors.rightMargin: threadTime.text !== "" ? Style.space(8) : 0
                 anchors.verticalCenter: threadName.verticalCenter
@@ -1240,6 +1362,11 @@ BarWidget {
                   font.pixelSize: Style.font.caption
                   font.bold: true
                 }
+              }
+
+              ReadCheck {
+                row: threadRow
+                anchors.centerIn: threadMarker
               }
 
               Text {
@@ -1288,14 +1415,6 @@ BarWidget {
                 }
               }
             }
-          }
-
-          MouseArea {
-            id: threadArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.openConversation(threadRow.modelData)
           }
         }
       }
