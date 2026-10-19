@@ -32,7 +32,7 @@ Item {
   readonly property bool editing: !!ws && !!ws.editing && ws.editing.conv === conv && ws.editing.ts === (msg ? msg.ts : "")
   readonly property bool mine: msg && ws ? Model.isMine(msg, ws.me.id) : false
   // Under the mouse; while the keyboard selects (`keyed`), the selected one.
-  readonly property bool hovered: keyed ? selected : (hover.hovered || toolbarHover.hovered)
+  readonly property bool hovered: keyed ? selected : (hover.hovered || membersHover.hovered || toolbarHover.hovered)
   readonly property bool ringed: selected && !editing
   readonly property bool mentionsMe: !!msg && !!ws && Md.mentionsMe(msg, ws.me.id) && !mine
   readonly property bool flash: !!msg && !!ws && ws.flashTs === msg.ts
@@ -97,28 +97,50 @@ Item {
     }
 
     // ------------------------------------------------------------ joins/leaves
+    // Lit on hover with the toolbar, and reacted to, like a message.
     Item {
+      id: membersRow
       visible: m.members
       width: parent.width
-      height: membersText.implicitHeight + m.t.sp(10)
+      height: membersText.y + membersText.implicitHeight + m.t.sp(5) + (membersReactions.visible ? membersReactions.height + m.t.sp(4) : 0)
+      Rectangle { anchors.fill: parent; color: m.hovered ? m.t.hover : "transparent" }
+      HoverHandler { id: membersHover }
+      TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: (ev, button) => { var p = membersRow.mapToItem(m.win.contentItem, ev.position.x, ev.position.y); m.openMenu(p.x, p.y) }
+      }
+      // Slack's person with a plus (joined, added), a minus when all left.
       Glyph {
+        id: membersIcon
         app: m.app
-        x: m.sidePad + (m.t.avatar - width) / 2
-        anchors.verticalCenter: parent.verticalCenter
-        icon: "󰀄"
+        x: m.sidePad + m.t.sp(6)
+        anchors.verticalCenter: membersText.verticalCenter
+        icon: m.members && m.row.run.every(function(x) { return Model.membershipOf(x) === "leave" }) ? "󰫬" : "󰠁"
         color: m.t.fgDim
-        size: m.t.fsText
+        size: m.t.fsText + 4
       }
       RichText {
         id: membersText
-        x: m.sidePad + m.t.avatar + m.t.sp(8)
+        x: membersIcon.x + membersIcon.width + m.t.sp(14)
+        y: m.t.sp(14)
         width: parent.width - x - m.sidePad
-        anchors.verticalCenter: parent.verticalCenter
         app: m.app
         size: m.t.fsText - 1
         color: m.t.fgDim
         html: m.members ? m.membersHtml() : ""
         onLink: url => { var u = url.match(/user\/([A-Z0-9]+)/); if (u) { m.ws.profileUser = u[1]; m.ws.thread = null } }
+      }
+      Reactions {
+        id: membersReactions
+        visible: m.members && !!m.msg && m.msg.reactions.length > 0
+        x: membersText.x
+        y: membersText.y + membersText.implicitHeight + m.t.sp(4)
+        width: membersText.width
+        app: m.app
+        win: m.win
+        ws: m.ws
+        conv: m.conv
+        msg: m.members ? m.msg : null
       }
     }
 
@@ -428,55 +450,56 @@ Item {
           }
         }
       }
+    }
+  }
 
-      // ---------------------------------------------------------- toolbar
-      Rectangle {
-        id: toolbar
-        visible: m.hovered && !m.editing && !!m.msg && !m.msg.pending && !m.win.menusShown
-        anchors.right: parent.right
-        anchors.rightMargin: m.t.sp(16)
-        y: -m.t.sp(16)
-        z: 20
-        height: m.t.sp(34)
-        width: tools.implicitWidth + m.t.sp(8)
-        radius: Math.max(6, m.t.radiusSmall)
-        color: m.t.popup
-        border.width: 1
-        border.color: m.t.lineStrong
-        HoverHandler { id: toolbarHover }
-        Row {
-          id: tools
-          anchors.centerIn: parent
-          spacing: m.t.sp(1)
-          // The user's one-click reactions (Workspace.quickReactions), made
-          // only while the bar shows.
-          Repeater {
-            id: quick
-            model: toolbar.visible && m.ws ? m.ws.quickReactions : []
-            delegate: Rectangle {
-              required property var modelData
-              width: m.t.sp(30); height: width; radius: Math.max(4, m.t.radiusSmall)
-              color: qma.containsMouse ? m.t.hoverStrong : "transparent"
-              EmojiIcon { anchors.centerIn: parent; app: m.app; ws: m.ws; name: parent.modelData; size: m.t.sp(18) }
-              MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (m.ws.react(m.conv, m.msg.ts, parent.modelData)) m.ws.bumpEmoji(parent.modelData) }
-            }
-          }
-          Rectangle { visible: quick.count > 0; width: 1; height: m.t.sp(20); color: m.t.line; anchors.verticalCenter: parent.verticalCenter }
-          IconButton { id: reactBtn; app: m.app; size: m.t.sp(30); icon: "󰇵"; tip: m.app.tr("Add reaction", "Adicionar reação"); onClicked: m.pickReaction(reactBtn) }
-          // A tombstone keeps its reactions and the menu; its replies bar opens the thread.
-          IconButton { visible: !m.inThread && !m.tombstone; app: m.app; size: m.t.sp(30); icon: "󰍪"; tip: m.app.tr("Reply in thread", "Responder na conversa"); onClicked: m.ws.openThread(m.conv, m.msg.threadTs || m.msg.ts) }
-          IconButton { visible: !m.tombstone; app: m.app; size: m.t.sp(30); icon: "󰒖"; tip: m.app.tr("Forward message", "Encaminhar mensagem"); onClicked: m.win.dialog("forward", { conv: m.conv, msg: m.msg }) }
-          IconButton {
-            visible: !m.tombstone
-            app: m.app; size: m.t.sp(30)
-            icon: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? "󰃀" : "󰃃"
-            color: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? m.t.red : m.t.fgSoft
-            tip: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? m.app.tr("Remove from Later", "Remover de Depois") : m.app.tr("Save for later", "Salvar para depois")
-            onClicked: m.ws.toggleSaved(m.conv, m.msg)
-          }
-          IconButton { id: moreBtn; app: m.app; size: m.t.sp(30); icon: "󰇙"; tip: m.app.tr("More actions", "Mais ações"); onClicked: { var p = moreBtn.mapToItem(m.win.contentItem, 0, moreBtn.height + 4); m.openMenu(p.x - m.t.sp(200), p.y) } }
+  // ------------------------------------------------------------ toolbar
+  Rectangle {
+    id: toolbar
+    visible: m.hovered && !m.editing && !!m.msg && !m.msg.pending && !m.win.menusShown
+    anchors.right: parent.right
+    anchors.rightMargin: m.t.sp(16)
+    // Over the row's top edge (a join line's or the message's).
+    y: (m.members ? membersRow.y : box.y) - m.t.sp(16)
+    z: 20
+    height: m.t.sp(34)
+    width: tools.implicitWidth + m.t.sp(8)
+    radius: Math.max(6, m.t.radiusSmall)
+    color: m.t.popup
+    border.width: 1
+    border.color: m.t.lineStrong
+    HoverHandler { id: toolbarHover }
+    Row {
+      id: tools
+      anchors.centerIn: parent
+      spacing: m.t.sp(1)
+      // The user's one-click reactions (Workspace.quickReactions), made
+      // only while the bar shows.
+      Repeater {
+        id: quick
+        model: toolbar.visible && m.ws ? m.ws.quickReactions : []
+        delegate: Rectangle {
+          required property var modelData
+          width: m.t.sp(30); height: width; radius: Math.max(4, m.t.radiusSmall)
+          color: qma.containsMouse ? m.t.hoverStrong : "transparent"
+          EmojiIcon { anchors.centerIn: parent; app: m.app; ws: m.ws; name: parent.modelData; size: m.t.sp(18) }
+          MouseArea { id: qma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (m.ws.react(m.conv, m.msg.ts, parent.modelData)) m.ws.bumpEmoji(parent.modelData) }
         }
       }
+      Rectangle { visible: quick.count > 0; width: 1; height: m.t.sp(20); color: m.t.line; anchors.verticalCenter: parent.verticalCenter }
+      IconButton { id: reactBtn; app: m.app; size: m.t.sp(30); icon: "󰇵"; tip: m.app.tr("Add reaction", "Adicionar reação"); onClicked: m.pickReaction(reactBtn) }
+      // A tombstone keeps its reactions and the menu; its replies bar opens the thread.
+      IconButton { visible: !m.inThread && !m.tombstone && !m.members; app: m.app; size: m.t.sp(30); icon: "󰍪"; tip: m.app.tr("Reply in thread", "Responder na conversa"); onClicked: m.ws.openThread(m.conv, m.msg.threadTs || m.msg.ts) }
+      IconButton { visible: !m.tombstone && !m.members; app: m.app; size: m.t.sp(30); icon: "󰒖"; tip: m.app.tr("Forward message", "Encaminhar mensagem"); onClicked: m.win.dialog("forward", { conv: m.conv, msg: m.msg }) }
+      IconButton {
+        visible: !m.tombstone && !m.members
+        app: m.app; size: m.t.sp(30)
+        icon: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? "󰃀" : "󰃃"
+        color: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? m.t.red : m.t.fgSoft
+        tip: m.ws && m.msg && m.ws.isSaved(m.conv, m.msg.ts) ? m.app.tr("Remove from Later", "Remover de Depois") : m.app.tr("Save for later", "Salvar para depois")
+        onClicked: m.ws.toggleSaved(m.conv, m.msg)
+      }
+      IconButton { id: moreBtn; app: m.app; size: m.t.sp(30); icon: "󰇙"; tip: m.app.tr("More actions", "Mais ações"); onClicked: { var p = moreBtn.mapToItem(m.win.contentItem, 0, moreBtn.height + 4); m.openMenu(p.x - m.t.sp(200), p.y) } }
     }
   }
 
@@ -555,7 +578,7 @@ Item {
     case Qt.Key_E: if (m.mine) w.editing = { conv: conv, ts: msg.ts }; break
     case Qt.Key_Delete:
     case Qt.Key_Backspace: if (m.mine) m.win.confirmDelete(conv, msg); break
-    case Qt.Key_R: m.pickReaction(toolbar.visible ? reactBtn : box); break
+    case Qt.Key_R: m.pickReaction(toolbar.visible ? reactBtn : (m.members ? membersRow : box)); break
     case Qt.Key_T:
     case Qt.Key_Return:
     case Qt.Key_Enter: if (!m.inThread) w.openThread(conv, msg.threadTs || msg.ts); break
@@ -587,11 +610,13 @@ Item {
       if (rx.length < 5 && !seen[base]) { seen[base] = true; rx.push(n) }
     })
     var items = [{ reactions: rx, ws: w, action: function(n) { if (w.react(conv, msg.ts, n)) w.bumpEmoji(n) } }]
-    items.push({ label: m.app.tr("Add reaction…", "Adicionar reação…"), icon: "󰇵", hint: "R", action: function() { m.pickReaction(toolbar.visible ? reactBtn : box) } })
-    // A tombstone: its reactions and its thread are all that's left.
-    if (m.tombstone) {
+    items.push({ label: m.app.tr("Add reaction…", "Adicionar reação…"), icon: "󰇵", hint: "R", action: function() { m.pickReaction(toolbar.visible ? reactBtn : (m.members ? membersRow : box)) } })
+    // A tombstone: its reactions and its thread are all that's left. A
+    // join line: its reactions, marking it unread, its link.
+    if (m.tombstone || m.members) {
       items.push({ separator: true })
-      items.push(m.followItem(w, conv, msg))
+      if (m.tombstone) items.push(m.followItem(w, conv, msg))
+      else if (!m.inThread) items.push({ label: m.app.tr("Mark unread", "Marcar como não lida"), icon: "󰇰", hint: "U", action: function() { w.markUnread(conv, msg.ts) } })
       items.push({ label: m.app.tr("Copy link", "Copiar link"), icon: "󰌷", hint: "L", action: function() { m.copyLink(w, conv, msg) } })
       m.win.menu(items, x, y)
       return

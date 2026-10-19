@@ -4,8 +4,9 @@ import Quickshell.Io
 import "../lib/Util.js" as U
 
 // The wire to Slack for one workspace: lib/transport.py, spoken to in JSON
-// lines. Calls come back to their callback; the socket's frames arrive as
-// signals. The process restarts itself if it ever dies.
+// lines. Calls come back to their callback, the socket's frames to
+// `frameHandler`; its opening and closing arrive as signals. The process
+// restarts itself if it ever dies.
 Item {
   id: root
 
@@ -17,9 +18,12 @@ Item {
   property bool started: false
   property bool socketOpen: false
 
+  // A frame as parsed, called directly: through a signal's `var` its
+  // arrays would arrive as lists Array.isArray doesn't take.
+  property var frameHandler: null
+
   signal socketOpened()
   signal socketClosed(string reason)
-  signal socketMessage(var data)
 
   property int _seq: 0
   property var _pending: ({})
@@ -66,7 +70,7 @@ Item {
     var msg
     try { msg = JSON.parse(text) } catch (e) { console.warn("omaslack: bad transport line", text.slice(0, 200)); return }
     if (msg.ws) {
-      if (msg.ws === "msg") root.socketMessage(msg.data)
+      if (msg.ws === "msg") { if (root.frameHandler) root.frameHandler(msg.data) }
       else if (msg.ws === "open") { root.socketOpen = true; root.socketOpened() }
       else if (msg.ws === "closed") { root.socketOpen = false; root.socketClosed(msg.reason || "") }
       return

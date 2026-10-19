@@ -211,7 +211,7 @@ Item {
     cookie: root.account.cookie || ""
     onSocketOpened: root.onSocketUp()
     onSocketClosed: reason => root.onSocketDown(reason)
-    onSocketMessage: data => root.onEvent(data)
+    frameHandler: function(data) { root.onEvent(data) }
   }
 
   readonly property var authErrors: ["invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive"]
@@ -367,6 +367,7 @@ Item {
         return null
       },
       custom: root.customEmoji, aliases: root.emojiAliases, slackEmoji: root.app ? root.app.slackEmoji : true,
+      previewImages: root.app ? root.app.previewImages : true,
       c: colors, emojiPx: emojiPx,
       ask: function(kind, id) { root.lookup(kind, id) }
     }
@@ -688,18 +689,16 @@ Item {
 
   // ------------------------------------------------------ emoji usage
   // Slack's memory of the emoji the user picks (the web client's
-  // loadFrecencyPrefs): `emoji_use`, times by name, and `frecency`, its
-  // jumper's visits, emoji among them as "E" + code points / custom name.
-  // Only read: the web client writes `frecency` whole, from its own copy,
-  // every minute, so what is picked here stays here (bumpEmoji).
-  property var emojiUse: ({})
-  property var emojiFrecency: ({})    // emoji id → score (Emoji.frecencyScores)
+  // loadFrecencyPrefs): `frecency`, its jumper's visits and counts, emoji
+  // among them as "E" + code points / custom name. Only read: the web
+  // client writes `frecency` whole, from its own copy, every minute, so
+  // what is picked here stays here (bumpEmoji).
+  property var emojiFrecency: ({})    // the pref as Slack keeps it (Emoji.frequentlyUsed)
   property var localFrecency: ({})    // name → {count, visits}, picked here
   function loadEmojiUse() {
-    root.api("users.prefs.get", { prefs: ["emoji_use", "frecency"].concat(root.quickPrefNames).join(",") }, function(b) {
+    root.api("users.prefs.get", { prefs: ["frecency"].concat(root.quickPrefNames).join(",") }, function(b) {
       var p = b.prefs || {}
-      root.emojiUse = Emoji.jsonPref(p.emoji_use)
-      root.emojiFrecency = Emoji.frecencyScores(p.frecency)
+      root.emojiFrecency = Emoji.jsonPref(p.frecency)
       var q = {}
       root.quickPrefNames.forEach(function(k) { if (p[k] !== undefined) q[k] = p[k] })
       root.quickPrefs = q
@@ -725,7 +724,7 @@ Item {
   }
 
   // The picker's "Frequently used" and, when so set, the one-click reactions.
-  readonly property var frequentEmoji: Emoji.frequentlyUsed(root.emojiFrecency, root.emojiUse, root.localFrecency, root.customEmoji, root.emojiAliases, 36)
+  readonly property var frequentEmoji: Emoji.frequentlyUsed(root.emojiFrecency, root.localFrecency, root.customEmoji, root.emojiAliases, 36)
 
   // The skin tone (2–6, 0: none): the picker's, else Slack's preferred_skin_tone.
   readonly property int skinTone: {
@@ -738,7 +737,9 @@ Item {
   // Slack's one-click reactions (Preferences → Messages & media → Emoji),
   // the emoji on a message's hover bar, as the web client picks them: none
   // when user_customized_quick_reactions_display_feature is 0; the three
-  // most used when ..._use_frequently_used_emoji; else the user's three
+  // most used when ..._use_frequently_used_emoji, by Slack's counts only
+  // (it picks them once a session, so a reaction here doesn't move them);
+  // else the user's three
   // (..._emoji_1–3), the admin's (team admin_customized_quick_reactions)
   // or ✅ 👀 🙌. Standard ones in the skin tone.
   readonly property var quickReactions: {
@@ -747,7 +748,7 @@ Item {
     var shown = root.userPref("user_customized_quick_reactions_display_feature")
     if (set(shown) && !on(shown)) return []
     var names
-    if (on(root.userPref("user_customized_quick_reactions_use_frequently_used_emoji"))) names = root.frequentEmoji.slice(0, 3)
+    if (on(root.userPref("user_customized_quick_reactions_use_frequently_used_emoji"))) names = Emoji.frequentlyUsed(root.emojiFrecency, null, root.customEmoji, root.emojiAliases, 3).slice(0, 3)
     else {
       var admin = Emoji.nameList(root.teamPrefs.admin_customized_quick_reactions)
       var custom = root.userPref("user_customized_quick_reactions_has_customized")
@@ -2332,6 +2333,11 @@ Item {
     if (m.appId) args.app_id = m.appId
     root.actionSentAt = Date.now()
     root.api("blocks.actions", args, function() { if (done) done(true) }, function(err) { root.say(root.errorText(err)); if (done) done(false) })
+  }
+  // Slack's Refresh under an app's card (work object): the app is asked
+  // for the latest and answers by changing the message (message_changed).
+  function refreshUnfurl(conv, ts, entityId, done) {
+    root.api("chat.refreshUnfurl", { channel: conv, ts: ts, entity_id: entityId }, function() { if (done) done(true) }, function() { if (done) done(false) })
   }
   function attachmentAction(conv, m, ctl, done) {
     var x = ctl.legacy || {}
