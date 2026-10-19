@@ -1,6 +1,5 @@
 import QtQuick
 import qs.Ui
-import "../lib/Model.js" as Model
 import "../lib/Registry.js" as Reg
 
 // The reactions under a message: emoji and count, yours highlighted, who
@@ -48,10 +47,7 @@ Flow {
         cursorShape: Qt.PointingHandCursor
         onClicked: rx.ws.react(rx.conv, rx.msg.ts, pill.modelData.name)
       }
-      PanelToolTip {
-        visible: pma.containsMouse
-        text: rx.who(pill.modelData)
-      }
+      ReactionTip { app: rx.app; ws: rx.ws; reaction: pill.modelData; hovered: pma.containsMouse }
     }
   }
 
@@ -69,16 +65,5 @@ Flow {
       onClicked: rx.win.emojiPicker(parent, function(name) { rx.ws.react(rx.conv, rx.msg.ts, name) }, {})
     }
     PanelToolTip { visible: ama.containsMouse; text: rx.app.tr("Add reaction", "Adicionar reação") }
-  }
-
-  // "You, Ana and 3 others reacted with :tada:"
-  function who(r) {
-    var names = []
-    var me = rx.ws.me.id
-    if (r.users.indexOf(me) >= 0) names.push(rx.app.tr("You", "Você"))
-    r.users.forEach(function(u) { if (u !== me) names.push(rx.ws.userName(u) || "?") })
-    var extra = Math.max(0, r.count - r.users.length)
-    var list = Model.people(names, extra, rx.app.lang)
-    return list + rx.app.tr(" reacted with :", " reagiu com :") + r.name + ":"
   }
 }

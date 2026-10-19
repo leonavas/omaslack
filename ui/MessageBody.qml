@@ -284,12 +284,12 @@ Column {
     id: attachmentC
     Loader {
       readonly property var p: parent.modelData
-      source: "AttachmentView.qml"
+      // Handed in as it's made, so its bindings never see it without them.
+      Component.onCompleted: setSource(p.work ? "WorkObjectView.qml" : "AttachmentView.qml",
+                                       { app: body.app, win: body.win, ws: body.ws, conv: body.conv, att: p,
+                                         linkHandler: body.link, imageSource: body.imageSource, pressHandler: body.press })
       onLoaded: {
-        item.app = body.app; item.win = body.win; item.ws = body.ws; item.conv = body.conv; item.att = p; item.width = Qt.binding(function() { return body.width })
-        item.linkHandler = body.link
-        item.imageSource = body.imageSource
-        item.pressHandler = body.press
+        item.width = Qt.binding(function() { return body.width })
         item.msg = Qt.binding(function() { return body.msg })
       }
     }

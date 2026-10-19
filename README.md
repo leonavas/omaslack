@@ -20,7 +20,7 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 - **Files**: a rail item with a hover card of recent and starred files, and a full page with All / Created by you / Shared with you, type filters, sorting, search, download and star.
 - **DMs, Activity and Later** tabs in the rail, each with a hover card, plus Drafts.
 - **Message actions**: edit, delete, forward, save for later, remind, mark unread, pin, copy link, and turning reply notifications on or off for a thread.
-- **Rich content**: Block Kit, attachments, apps and bots with their names and pictures, inline images and an image viewer.
+- **Rich content**: Block Kit, attachments, apps and bots with their names and pictures, inline images and an image viewer. Apps' link cards (a Jira issue, for instance) are drawn as Slack draws them, with their fields, buttons and Refresh.
 - **Channels**: details (topic, description, members, notifications), rename, archive, convert, delete, invite, browse channels, and new channel or new message.
 - **You**: status, away or active, pausing notifications (Slack's do-not-disturb), and editing your profile.
 - **Multiple workspaces**, stacked or expanded in the rail. Ctrl+Tab and Ctrl+1…9 switch between them.
