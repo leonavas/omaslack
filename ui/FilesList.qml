@@ -255,6 +255,7 @@ Rectangle {
           { id: "shared", label: fl.app.tr("Shared with you", "Compartilhados com você") }
         ]
         delegate: Chip {
+          app: fl.app
           required property var modelData
           label: modelData.label
           on: fl.who === modelData.id
@@ -263,6 +264,7 @@ Rectangle {
       }
       Rectangle { width: 1; height: fl.t.sp(20); color: fl.t.line; anchors.verticalCenter: parent.verticalCenter }
       Chip {
+        app: fl.app
         id: typeChip
         label: fl.typeFilter ? fl.typeGroup.label : fl.app.tr("Types", "Tipos")
         on: fl.typeFilter !== ""
@@ -494,6 +496,7 @@ Rectangle {
 
   // ---------------------------------------------------------------- pieces
   // A filter as a pill: filled while on, a chevron when it opens a menu.
+  // Handed fl.app: since Qt 6.12 its lib/Registry.js is a copy without one.
   component Chip: Rectangle {
     id: chip
     property var app: Reg.service

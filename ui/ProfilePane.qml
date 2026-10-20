@@ -370,24 +370,28 @@ Rectangle {
         // An app's "Open app": its DM, as in Slack. Without a bot user
         // (a webhook) there is no DM, VIP or page to open.
         ActionButton {
+          app: pp.app
           visible: !pp.self && !pp.gone && !pp.botKey
           icon: pp.isApp ? "󰀻" : "󰍥"
           text: pp.isApp ? pp.app.tr("Open app", "Abrir app") : pp.app.tr("Message", "Mensagem")
           onClicked: pp.ws.openDm([pp.uid], function(id) { pp.ws.open(id) })
         }
         ActionButton {
+          app: pp.app
           visible: pp.self
           icon: "󰏫"
           text: pp.app.tr("Edit profile", "Editar perfil")
           onClicked: pp.win.dialog("profileEdit", {})
         }
         ActionButton {
+          app: pp.app
           visible: pp.self
           icon: "󰇵"
           text: pp.app.tr("Set a status", "Definir status")
           onClicked: pp.win.dialog("status", {})
         }
         ActionButton {
+          app: pp.app
           visible: !pp.self && (!pp.bot || pp.isApp) && !pp.botKey && !pp.gone
           icon: pp.vip ? "󰓎" : "󰓒"
           iconColor: pp.vip ? pp.t.yellow : pp.t.fg
@@ -397,6 +401,7 @@ Rectangle {
           onClicked: pp.ws.setVip(pp.uid, !pp.vip)
         }
         ActionButton {
+          app: pp.app
           id: moreBtn
           icon: "󰇙"
           text: ""
@@ -429,6 +434,7 @@ Rectangle {
           bottomPadding: pp.t.sp(2)
         }
         ContactRow {
+          app: pp.app
           visible: !!pp.u && !!pp.u.email
           icon: "󰇮"
           label: pp.app.tr("Email address", "Endereço de e-mail")
@@ -436,6 +442,7 @@ Rectangle {
           onClicked: { pp.app.copy(value); pp.win.toast(pp.app.tr("Email copied", "E-mail copiado")) }
         }
         ContactRow {
+          app: pp.app
           visible: !!pp.u && !!pp.u.phone
           icon: "󰏲"
           label: pp.app.tr("Phone", "Telefone")
@@ -466,6 +473,7 @@ Rectangle {
           font.bold: true
         }
         ContactRow {
+          app: pp.app
           visible: !!pp.u && !!pp.u.handle && !pp.bot
           icon: "󰁥"
           label: pp.app.tr("Username", "Nome de usuário")
@@ -474,6 +482,7 @@ Rectangle {
           onClicked: { pp.app.copy(value); pp.win.toast(pp.app.tr("Copied", "Copiado")) }
         }
         ContactRow {
+          app: pp.app
           visible: !!pp.u && !!pp.u.tzLabel && !pp.bot
           icon: "󰥔"
           label: pp.app.tr("Time zone", "Fuso horário")
@@ -481,6 +490,7 @@ Rectangle {
           link: false
         }
         ContactRow {
+          app: pp.app
           icon: "󰻾"
           label: pp.botKey ? pp.app.tr("Bot ID", "ID do bot") : pp.app.tr("Member ID", "ID de membro")
           value: pp.shownId
@@ -492,6 +502,8 @@ Rectangle {
   }
 
   // ---------------------------------------------------------------- pieces
+  // Since Qt 6.12 an inline component gets its own copy of lib/Registry.js,
+  // with no service in it: each one is handed pp.app.
   component ActionButton: Rectangle {
     id: ab
     property var app: Reg.service
