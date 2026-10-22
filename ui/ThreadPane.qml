@@ -30,7 +30,7 @@ Rectangle {
       spacing: 1
       Text { text: tp.app.tr("Thread", "Conversa"); color: tp.t.fgBright; font.family: tp.t.font; font.pixelSize: tp.t.fsTitle + 1; font.bold: true }
       Text {
-        text: tp.c ? ((tp.c.kind === "im" || tp.c.kind === "mpim" ? "" : (tp.c.kind === "private" ? "🔒" : "#")) + tp.ws.convLabel(tp.conv)) : ""
+        text: tp.c ? ((tp.c.kind === "im" || tp.c.kind === "mpim" ? "" : (tp.c.kind === "private" ? "󰌾" : "#")) + tp.ws.convLabel(tp.conv)) : ""
         textFormat: Text.PlainText
         color: tp.t.fgDim
         font.family: tp.t.font

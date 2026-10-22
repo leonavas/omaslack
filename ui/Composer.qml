@@ -579,7 +579,8 @@ Rectangle {
     width: parent.width - 2
 
     // Formatting bar: what's on at the cursor shows as on. Slack's: faint
-    // icons, in groups set apart by a wider gap.
+    // icons, in groups set apart by a wider gap. What doesn't fit (a narrow
+    // thread) goes under "…" at the end, as in Slack.
     Row {
       id: fmtBar
       visible: box.showFormatting && !box.editing
@@ -588,18 +589,73 @@ Rectangle {
       spacing: box.t.sp(4)
       readonly property bool inCode: box.marks.k === "pre"
       readonly property color tone: box.t.alpha(box.t.fgDim, input.activeFocus ? 0.9 : 0.6)
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.b; dim: parent.inCode; tip: box.app.tr("Bold", "Negrito") + "  Ctrl+B"; onClicked: box.toggleMark("b") }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.i; dim: parent.inCode; tip: box.app.tr("Italic", "Itálico") + "  Ctrl+I"; onClicked: box.toggleMark("i") }
-      FmtButton { app: box.app; icon: "󰊇"; tone: fmtBar.tone; active: box.marks.u; dim: parent.inCode; tip: box.app.tr("Underline", "Sublinhado"); onClicked: box.toggleMark("u") }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.x; dim: parent.inCode; tip: box.app.tr("Strikethrough", "Tachado") + "  Ctrl+Shift+X"; onClicked: box.toggleMark("x") }
-      Item { width: box.t.sp(4); height: 1 }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.link !== ""; dim: parent.inCode; tip: box.app.tr("Link", "Link") + "  Ctrl+Shift+U"; onClicked: box.insertLink() }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "ol"; tip: box.app.tr("Numbered list", "Lista numerada") + "  Ctrl+Shift+7"; onClicked: box.toggleKind("ol") }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "ul"; tip: box.app.tr("Bulleted list", "Lista com marcadores") + "  Ctrl+Shift+8"; onClicked: box.toggleKind("ul") }
-      Item { width: box.t.sp(4); height: 1 }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: box.marks.k === "q"; tip: box.app.tr("Quote", "Citação") + "  Ctrl+Shift+9"; onClicked: box.toggleKind("q") }
-      FmtButton { app: box.app; icon: "󰗀"; tone: fmtBar.tone; active: box.marks.c; dim: parent.inCode; tip: box.app.tr("Code", "Código") + "  Ctrl+Shift+C"; onClicked: box.toggleMark("c") }
-      FmtButton { app: box.app; icon: ""; tone: fmtBar.tone; active: parent.inCode; tip: box.app.tr("Code block", "Bloco de código") + "  Ctrl+Alt+Shift+C"; onClicked: box.toggleKind("pre") }
+      // {icon, en, pt, keys} and what it does: a mark, a line kind, the link.
+      readonly property var items: [
+        { icon: "", en: "Bold", pt: "Negrito", keys: "Ctrl+B", mark: "b" },
+        { icon: "", en: "Italic", pt: "Itálico", keys: "Ctrl+I", mark: "i" },
+        { icon: "󰊇", en: "Underline", pt: "Sublinhado", keys: "", mark: "u" },
+        { icon: "", en: "Strikethrough", pt: "Tachado", keys: "Ctrl+Shift+X", mark: "x" },
+        { gap: true },
+        { icon: "", en: "Link", pt: "Link", keys: "Ctrl+Shift+U", link: true },
+        { icon: "", en: "Numbered list", pt: "Lista numerada", keys: "Ctrl+Shift+7", kind: "ol" },
+        { icon: "", en: "Bulleted list", pt: "Lista com marcadores", keys: "Ctrl+Shift+8", kind: "ul" },
+        { gap: true },
+        { icon: "", en: "Quote", pt: "Citação", keys: "Ctrl+Shift+9", kind: "q" },
+        { icon: "󰗀", en: "Code", pt: "Código", keys: "Ctrl+Shift+C", mark: "c" },
+        { icon: "", en: "Code block", pt: "Bloco de código", keys: "Ctrl+Alt+Shift+C", kind: "pre" }
+      ]
+      // How many fit, "…" taking its place when not all do.
+      readonly property int fits: {
+        var btn = box.t.sp(28), gap = box.t.sp(4), sp = fmtBar.spacing
+        var room = box.width - 2 * box.t.sp(6)
+        function width(n) { var w = 0; for (var i = 0; i < n; i++) w += (i ? sp : 0) + (items[i].gap ? gap : btn); return w }
+        if (width(items.length) <= room) return items.length
+        var n = items.length
+        while (n > 0 && (width(n) + sp + btn > room || items[n - 1].gap)) n--
+        return n
+      }
+      function on(it) { return it.mark ? box.marks[it.mark] : it.kind ? box.marks.k === it.kind : it.link ? box.marks.link !== "" : false }
+      function dims(it) { return fmtBar.inCode && (!!it.mark || !!it.link) }
+      function run(it) { if (it.mark) box.toggleMark(it.mark); else if (it.kind) box.toggleKind(it.kind); else if (it.link) box.insertLink() }
+      function tipOf(it) { return box.app.tr(it.en, it.pt) + (it.keys ? "  " + it.keys : "") }
+
+      Repeater {
+        model: fmtBar.items
+        delegate: Item {
+          required property var modelData
+          required property int index
+          visible: index < fmtBar.fits
+          width: modelData.gap ? box.t.sp(4) : fb.width
+          height: fmtBar.height
+          FmtButton {
+            id: fb
+            visible: !parent.modelData.gap
+            app: box.app
+            icon: parent.modelData.icon || ""
+            tone: fmtBar.tone
+            active: fmtBar.on(parent.modelData)
+            dim: fmtBar.dims(parent.modelData)
+            tip: parent.modelData.gap ? "" : fmtBar.tipOf(parent.modelData)
+            onClicked: fmtBar.run(parent.modelData)
+          }
+        }
+      }
+      FmtButton {
+        id: fmtMore
+        visible: fmtBar.fits < fmtBar.items.length
+        app: box.app
+        icon: "󰇘"
+        tone: fmtBar.tone
+        tip: box.app.tr("More formatting", "Mais formatação")
+        onClicked: {
+          var out = []
+          fmtBar.items.slice(fmtBar.fits).forEach(function(it) {
+            if (it.gap) return
+            out.push({ label: box.app.tr(it.en, it.pt), icon: it.icon, hint: it.keys, action: function() { fmtBar.run(it) } })
+          })
+          box.win.menuAt(fmtMore, out, 0, fmtMore.height + box.t.sp(4))
+        }
+      }
     }
 
     // Files waiting to go.

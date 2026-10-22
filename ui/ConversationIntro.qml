@@ -37,7 +37,7 @@ Column {
 
   Text {
     visible: !intro.other
-    text: !intro.c ? "" : (intro.c.kind === "mpim" ? intro.ws.convLabel(intro.conv) : (intro.c.kind === "private" ? "🔒 " : "# ") + intro.c.name)
+    text: !intro.c ? "" : (intro.c.kind === "mpim" ? intro.ws.convLabel(intro.conv) : (intro.c.kind === "private" ? "󰌾 " : "# ") + intro.c.name)
     textFormat: Text.PlainText
     color: intro.t.fgBright
     font.family: intro.t.font
@@ -101,8 +101,8 @@ Column {
     var who = c.creator ? intro.ws.userName(c.creator) : ""
     var when = c.created ? U.fullDate(new Date(c.created * 1000), intro.app.lang) : ""
     var head = intro.app.lang === "pt-BR"
-      ? (who ? "<b>@" + esc(who) + "</b> criou este canal" + (when ? " em " + esc(when) : "") + ". " : "") + "Este é o início do canal <b>" + (c.kind === "private" ? "🔒" : "#") + esc(c.name) + "</b>."
-      : (who ? "<b>@" + esc(who) + "</b> created this channel" + (when ? " on " + esc(when) : "") + ". " : "") + "This is the very beginning of the <b>" + (c.kind === "private" ? "🔒" : "#") + esc(c.name) + "</b> channel."
+      ? (who ? "<b>@" + esc(who) + "</b> criou este canal" + (when ? " em " + esc(when) : "") + ". " : "") + "Este é o início do canal <b>" + (c.kind === "private" ? "󰌾" : "#") + esc(c.name) + "</b>."
+      : (who ? "<b>@" + esc(who) + "</b> created this channel" + (when ? " on " + esc(when) : "") + ". " : "") + "This is the very beginning of the <b>" + (c.kind === "private" ? "󰌾" : "#") + esc(c.name) + "</b> channel."
     if (c.purpose) head += "<br/>" + esc(c.purpose.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"))
     return head
   }

@@ -81,6 +81,9 @@ Item {
     visible: r.isSection
     anchors.fill: parent
     anchors.topMargin: r.gap
+    // The header hovered, its buttons too: the row's MouseArea loses the
+    // hover to a button over it, which would hide them under the mouse.
+    HoverHandler { id: secHover }
     Rectangle { visible: r.narrow; anchors.centerIn: parent; width: parent.width * 0.5; height: 1; color: r.t.line }
     Row {
       visible: !r.narrow
@@ -140,22 +143,22 @@ Item {
       }
     }
     Row {
-      visible: !r.narrow && ma.containsMouse
+      visible: !r.narrow && (ma.containsMouse || secHover.hovered)
       anchors.right: parent.right
-      anchors.rightMargin: r.t.sp(14)
+      anchors.rightMargin: r.t.sp(11)
       anchors.verticalCenter: parent.verticalCenter
       anchors.verticalCenterOffset: r.t.sp(2)
-      spacing: r.t.sp(2)
+      spacing: 0
       IconButton {
         id: secMore
-        app: r.app; size: r.t.sp(22); icon: "󰇙"; iconSize: r.t.fsSmall
+        app: r.app; size: r.t.sp(28); icon: "󰇙"; iconSize: r.t.fsSmall
         tip: r.app.tr("Section options", "Opções da seção")
         onClicked: { var p = secMore.mapToItem(r.win.contentItem, 0, secMore.height); r.sidebar.sectionMenu(r.row, p.x, p.y) }
       }
       IconButton {
         id: secAdd
         visible: r.row.type === "channels" || r.row.type === "direct_messages"
-        app: r.app; size: r.t.sp(22); icon: "󰐕"; iconSize: r.t.fsSmall
+        app: r.app; size: r.t.sp(28); icon: "󰐕"; iconSize: r.t.fsSmall
         tip: r.row.type === "channels" ? r.app.tr("Add channels", "Adicionar canais") : r.app.tr("New message", "Nova mensagem")
         onClicked: r.row.type === "channels" ? r.win.dialog("browse") : r.win.dialog("newMessage")
       }
