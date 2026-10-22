@@ -1,5 +1,6 @@
 import QtQuick
 import "../lib/Mrkdwn.js" as Md
+import "../lib/Emoji.js" as Emoji
 import "../lib/Registry.js" as Reg
 
 // Message text: Slack's rich text as HTML, selectable, links clickable.
@@ -158,7 +159,70 @@ TextEdit {
   MouseArea {
     anchors.fill: parent
     acceptedButtons: Qt.NoButton
-    cursorShape: rt.hoveredLink ? Qt.PointingHandCursor : Qt.IBeamCursor
+    cursorShape: rt.hoveredLink || rt.emojiHover ? Qt.PointingHandCursor : Qt.IBeamCursor
+  }
+
+  // An emoji under the mouse: Slack's bubble with its :name: (EmojiTip);
+  // a click copies it (a standard one as its character, a workspace's as
+  // :name:, which Slack draws wherever it's pasted).
+  // The text's picture (U+FFFC) under the point, its alt the name (a
+  // custom one's ":name:", a standard one's character) and its picture
+  // the html's (a GIF's in the text is a see-through stand-in).
+  property var emojiHover: null      // {name, src, x, y, w, h}
+  HoverHandler {
+    id: emojiHov
+    onPointChanged: rt.hoverEmoji(emojiHov.point.position)
+    onHoveredChanged: if (!emojiHov.hovered) rt.emojiHover = null
+  }
+  function hoverEmoji(p) {
+    var hit = null
+    var at = rt.positionAt(p.x, p.y)
+    for (var c = Math.max(0, at - 1); c <= at && !hit; c++) {
+      if (rt.getText(c, c + 1) !== "\ufffc") continue
+      var r = rt.positionToRectangle(c), n = rt.positionToRectangle(c + 1)
+      var w = n.y === r.y && n.x > r.x ? n.x - r.x : rt.t.emojiPx
+      if (p.x < r.x || p.x > r.x + w || p.y < r.y || p.y > r.y + r.height) continue
+      var tag = /<img\b[^>]*>/i.exec(rt.getFormattedText(c, c + 1))
+      if (!tag) continue
+      var alt = (/\balt="([^"]*)"/i.exec(tag[0]) || [])[1] || ""
+      var src = (/\bsrc="([^"]*)"/i.exec(tag[0]) || [])[1] || ""
+      alt = Md.unescape(alt.replace(/&quot;/g, "\""))
+      var name = /^:.+:$/.test(alt) ? alt.slice(1, -1) : Emoji.shortcodeOf(alt)
+      if (!name) continue
+      if (src.indexOf("blank.png") >= 0) {
+        var m = new RegExp("<img\\b[^>]*\\balt=\"" + alt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\"[^>]*>", "i").exec(rt.html)
+        var real = m ? (/\bsrc="([^"]*)"/i.exec(m[0]) || [])[1] : ""
+        if (real) src = real
+      }
+      hit = { name: name, glyph: /^:.+:$/.test(alt) ? "" : alt, src: src.replace(/&amp;/g, "&"), x: r.x, y: r.y, w: w, h: r.height }
+    }
+    if (!hit) { rt.emojiHover = null; return }
+    var o = rt.emojiHover
+    if (!o || o.name !== hit.name || o.x !== hit.x || o.y !== hit.y) rt.emojiHover = hit
+  }
+  TapHandler {
+    enabled: !!rt.emojiHover
+    acceptedButtons: Qt.LeftButton
+    onTapped: {
+      var e = rt.emojiHover
+      if (!e) return
+      var text = e.glyph || ":" + e.name + ":"
+      rt.app.copy(text)
+      if (rt.app.current) rt.app.current.say(rt.app.tr("Copied ", "Copiado ") + text)
+    }
+  }
+  Item {
+    id: emojiSpot
+    x: rt.emojiHover ? rt.emojiHover.x : 0
+    y: rt.emojiHover ? rt.emojiHover.y : 0
+    width: rt.emojiHover ? rt.emojiHover.w : 0
+    height: rt.emojiHover ? rt.emojiHover.h : 0
+    EmojiTip {
+      app: rt.app
+      name: rt.emojiHover ? rt.emojiHover.name : ""
+      src: rt.emojiHover ? rt.emojiHover.src : ""
+      hovered: !!rt.emojiHover
+    }
   }
 
   // Animated emoji, on the see-through picture that holds their place,
