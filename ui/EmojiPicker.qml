@@ -223,7 +223,7 @@ Item {
       }
     }
     if (p.searching) {
-      var found = Emoji.search(p.query, p.ws ? p.ws.customEmoji : null, p.ws ? p.ws.emojiAliases : null, 90).filter(p.usable).slice(0, 60)
+      var found = Emoji.search(p.query, p.ws ? p.ws.customEmoji : null, p.ws ? p.ws.emojiAliases : null, 90, p.ws ? p.ws.frequentEmoji : null).filter(p.usable).slice(0, 60)
       addItems(found, 0)
     } else {
       var cat = p.catalogue()

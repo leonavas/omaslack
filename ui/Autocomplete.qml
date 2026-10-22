@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import qs.Ui
 import "../lib/Util.js" as U
 import "../lib/Emoji.js" as Emoji
@@ -71,7 +72,7 @@ Rectangle {
     var w = ac.ws
     var out = []
     if (kind === "emoji") {
-      out = Emoji.search(q, w.customEmoji, w.emojiAliases, 8)
+      out = Emoji.search(q, w.customEmoji, w.emojiAliases, 20, w.frequentEmoji)
     } else if (kind === "user") {
       var users = w.users
       var ranked = []
@@ -113,6 +114,21 @@ Rectangle {
     ac.items = out
   }
 
+  // An emoji's :name: with what matched lit, as Slack does: yellow on the
+  // list, bold and underlined on the chosen row (the yellow would vanish
+  // into its color).
+  function litName(it, chosen) {
+    var name = String(it.name || ""), hl = it.hl || [], out = "", at = 0
+    var on = chosen ? "<b><u>" : "<span style=\"color:" + ac.t.html.meText + ";background-color:" + ac.t.html.meBg + ";\">"
+    var off = chosen ? "</u></b>" : "</span>"
+    hl.forEach(function(r) {
+      if (r[0] < at) return
+      out += U.escapeHtml(name.slice(at, r[0])) + on + U.escapeHtml(name.slice(r[0], r[1])) + off
+      at = r[1]
+    })
+    return ":" + out + U.escapeHtml(name.slice(at)) + ":"
+  }
+
   Text {
     id: title
     x: ac.t.sp(14)
@@ -135,6 +151,7 @@ Rectangle {
     height: ac.height - ac.t.sp(36)
     clip: true
     model: ac.items
+    ScrollBar.vertical: ThinScroll { app: ac.app }
     currentIndex: ac.sel
     onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
     delegate: Rectangle {
@@ -155,8 +172,8 @@ Rectangle {
           property var it: modelData
         }
         Text {
-          text: ac.kind === "emoji" ? ":" + modelData.name + ":" : (ac.kind === "channel" ? modelData.name : (modelData.name || ""))
-          textFormat: Text.PlainText
+          text: ac.kind === "emoji" ? ac.litName(modelData, index === ac.sel) : (ac.kind === "channel" ? modelData.name : (modelData.name || ""))
+          textFormat: ac.kind === "emoji" ? Text.RichText : Text.PlainText
           color: parent.parent.ink
           font.family: ac.t.font
           font.pixelSize: ac.t.fsText - 1
@@ -173,6 +190,17 @@ Rectangle {
           elide: Text.ElideRight
           width: Math.min(implicitWidth, list.width - ac.t.sp(220))
         }
+      }
+      Text {
+        visible: index === ac.sel
+        anchors.right: parent.right
+        anchors.rightMargin: ac.t.sp(10)
+        anchors.verticalCenter: parent.verticalCenter
+        text: "Enter"
+        textFormat: Text.PlainText
+        color: ac.t.alpha(parent.ink, 0.75)
+        font.family: ac.t.font
+        font.pixelSize: ac.t.fsTiny
       }
       MouseArea { id: rma; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { ac.sel = index; ac.pick(); ac.input.forceActiveFocus() } }
     }

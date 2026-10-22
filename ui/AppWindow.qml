@@ -191,12 +191,16 @@ FloatingWindow {
         // Files: always all of it (a file opens outside the panel).
         readonly property bool activityFull: appWin.railTab === "activity" && !appWin.activityOpen
         readonly property bool fullPage: activityFull || appWin.railTab === "files"
+        // Activity's list beside a message: dragged to a width (kept), else
+        // a share of the panel.
+        readonly property int activityW: activityWidth.value > 0
+          ? Math.round(Math.max(appWin.t.sp(300), Math.min(activityWidth.value, width * 0.6)))
+          : Math.round(Math.max(appWin.t.sp(340), Math.min(width * 0.42, appWin.t.sp(640))))
         Loader {
           id: sidebarLoader
           x: 0
           y: 0
-          width: parent.fullPage ? parent.width
-               : (appWin.railTab === "activity" ? Math.round(Math.max(appWin.t.sp(340), Math.min(parent.width * 0.42, appWin.t.sp(640)))) : sidebarWidth.value)
+          width: parent.fullPage ? parent.width : (appWin.railTab === "activity" ? parent.activityW : sidebarWidth.value)
           height: parent.height
           sourceComponent: appWin.railTab === "dms" ? dmsC : (appWin.railTab === "activity" ? activityC : (appWin.railTab === "later" ? laterC
                          : (appWin.railTab === "files" ? filesC : sidebarC)))
@@ -211,12 +215,17 @@ FloatingWindow {
           id: sidebarWidth
           property int value: Math.round(appWin.app.setting("sidebarWidth", appWin.t.sp(260)))
         }
+        QtObject {
+          id: activityWidth
+          property int value: Math.round(appWin.app.setting("activityWidth", 0))   // 0: the default share
+        }
 
         // The sidebar's edge: drag to resize, narrower than a name folds it
-        // into a rail of photos.
+        // into a rail of photos. Activity's list beside a message resizes
+        // the same way (its own width).
         Rectangle {
           id: grip
-          visible: appWin.railTab !== "activity" && appWin.railTab !== "files"
+          visible: !parent.fullPage
           x: sidebarLoader.width - 2
           width: 5
           height: parent.height
@@ -230,15 +239,20 @@ FloatingWindow {
             cursorShape: Qt.SplitHCursor
             property real startX: 0
             property int startW: 0
-            onPressed: mouse => { startX = mapToItem(panel, mouse.x, 0).x; startW = sidebarWidth.value }
+            readonly property bool activity: appWin.railTab === "activity"
+            onPressed: mouse => { startX = mapToItem(panel, mouse.x, 0).x; startW = sidebarLoader.width }
             onPositionChanged: mouse => {
               if (!pressed) return
               var nx = mapToItem(panel, mouse.x, 0).x
               var w = startW + (nx - startX)
+              if (activity) { activityWidth.value = Math.round(Math.max(appWin.t.sp(300), Math.min(w, panel.width * 0.6))); return }
               if (w < appWin.t.sp(150)) w = appWin.t.sp(68)
               sidebarWidth.value = Math.round(Math.max(appWin.t.sp(68), Math.min(w, panel.width * 0.45)))
             }
-            onReleased: appWin.app.setSetting("sidebarWidth", sidebarWidth.value)
+            onReleased: {
+              if (activity) appWin.app.setSetting("activityWidth", activityWidth.value)
+              else appWin.app.setSetting("sidebarWidth", sidebarWidth.value)
+            }
           }
         }
 
@@ -269,9 +283,41 @@ FloatingWindow {
             id: side
             active: !!appWin.ws && (appWin.ws.thread !== null || appWin.ws.profileUser !== "")
             x: parent.width - width
-            width: Math.round(Math.min(Math.max(appWin.t.sp(360), main.width * 0.36), appWin.t.sp(560)))
+            // Dragged to a width (kept, leaving the conversation room), else a share.
+            width: sideWidth.value > 0
+                   ? Math.round(Math.max(appWin.t.sp(300), Math.min(sideWidth.value, main.width - appWin.t.sp(320))))
+                   : Math.round(Math.min(Math.max(appWin.t.sp(360), main.width * 0.36), appWin.t.sp(560)))
             height: parent.height
             sourceComponent: appWin.ws && appWin.ws.profileUser !== "" ? profileC : threadC
+          }
+          QtObject {
+            id: sideWidth
+            property int value: Math.round(appWin.app.setting("sidePaneWidth", 0))   // 0: the default share
+          }
+          // The thread's (or profile's) edge: drag to resize.
+          Rectangle {
+            visible: side.active
+            x: side.x - 3
+            width: 5
+            height: parent.height
+            color: sideMa.containsMouse || sideMa.pressed ? appWin.t.alpha(appWin.t.accent, 0.5) : "transparent"
+            z: 5
+            MouseArea {
+              id: sideMa
+              anchors.fill: parent
+              anchors.margins: -2
+              hoverEnabled: true
+              cursorShape: Qt.SplitHCursor
+              property real startX: 0
+              property int startW: 0
+              onPressed: mouse => { startX = mapToItem(panel, mouse.x, 0).x; startW = side.width }
+              onPositionChanged: mouse => {
+                if (!pressed) return
+                var w = startW - (mapToItem(panel, mouse.x, 0).x - startX)
+                sideWidth.value = Math.round(Math.max(appWin.t.sp(300), Math.min(w, main.width - appWin.t.sp(320))))
+              }
+              onReleased: appWin.app.setSetting("sidePaneWidth", sideWidth.value)
+            }
           }
           Component { id: threadC; ThreadPane { app: appWin.app; win: appWin; ws: appWin.ws } }
           Component { id: profileC; ProfilePane { app: appWin.app; win: appWin; ws: appWin.ws } }
