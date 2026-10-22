@@ -24,7 +24,7 @@ Item {
 
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   property var rowCache: new Map()
-  onConvChanged: { glide.stop(); root.rowCache = new Map(); root.stick = true; root.opened = false; root.landing = false; root.selKey = ""; wheelOff.stop(); Qt.callLater(root.settle) }
+  onConvChanged: { glide.stop(); root.rowCache = new Map(); root.stick = true; root.opened = false; root.landing = false; root.holdNew = false; root.selKey = ""; wheelOff.stop(); Qt.callLater(root.settle) }
   onThreadTsChanged: root.selKey = ""
 
   // Pinned to the newest message unless the reader scrolled up; on open,
@@ -42,7 +42,7 @@ Item {
   function settle() {
     if (!root.opened && root.rows.length > 0 && !root.loading) {
       root.opened = true
-      if (root.rows.some(function(r) { return r.isNew })) { root.stick = false; root._auto = true; root.showNew(); root._auto = false; return }
+      if (root.rows.some(function(r) { return r.isNew })) { root.stick = false; root.holdNew = true; newHold.restart(); root.keepNew(); return }
     }
     // Back from an old stretch of history: the newest page glides in.
     var land = root.landing && root.rows.length > 0 && !root.loading
@@ -121,23 +121,21 @@ Item {
       }
     }
 
-    // Pictures and unfurls grow after loading: stay on the newest message.
-    onContentHeightChanged: if (root.stick && !root.inThread) Qt.callLater(root.settle)
+    // Pictures and unfurls grow after loading: stay on the newest message,
+    // or on the first new one just opened to.
+    onContentHeightChanged: {
+      if (root.stick && !root.inThread) Qt.callLater(root.settle)
+      else if (root.holdNew) Qt.callLater(root.keepNew)
+    }
     // Any scroll away from the newest message lets go of it; back down there holds it again.
     onContentYChanged: {
       root.maybeLoad()
-      if (!root._auto && root.scrolling) root.stick = root.nearNewest()
+      if (!root._auto && root.scrolling) { root.holdNew = false; root.stick = root.nearNewest() }
     }
     onMovementEnded: root.stick = root.nearNewest()
-    // Only notices the wheel / touchpad: a blocking handler would take the
-    // event from the list, which then doesn't scroll at all.
-    WheelHandler {
-      acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-      blocking: false
-      target: null
-      onWheel: { glide.stop(); wheelOff.restart() }
-    }
-    Timer { id: wheelOff; interval: 400; onTriggered: root.stick = root.nearNewest() }
+    // The wheel / touchpad, further than Qt's: the reader scrolling.
+    WheelScroll { view: list; step: root.t.sp(160); onWheeled: { glide.stop(); wheelOff.restart() } }
+    Timer { id: wheelOff; interval: 600; onTriggered: root.stick = root.nearNewest() }
     onHeightChanged: root.maybeLoad()
   }
 
@@ -169,6 +167,7 @@ Item {
   // "Jump to recent": a glide down, the last stretch only when far up. Off
   // in an old stretch of history, the newest page loads and glides in.
   function toBottom() {
+    root.holdNew = false
     if (root.detached) {
       glide.stop()
       root.landing = true
@@ -195,6 +194,7 @@ Item {
     var i = root.rowOfTs(ts)
     if (i < 0) return false
     root.stick = false
+    root.holdNew = false
     if (smooth) {
       glide.to(function() { var j = root.rowOfTs(ts); if (j >= 0) list.positionViewAtIndex(j, ListView.Center) })
       return true
@@ -206,7 +206,18 @@ Item {
     return true
   }
 
-  // On open with unread: the New line near the top.
+  // On open with unread: the first new message at the top, and below it
+  // as many of the rest as fit (all of them, if they do: the list stops at
+  // the newest). Held there while pictures and unfurls load and the rows
+  // grow (`holdNew`), until the reader scrolls or a few seconds pass.
+  property bool holdNew: false
+  Timer { id: newHold; interval: 3000; onTriggered: root.holdNew = false }
+  function keepNew() {
+    if (!root.holdNew || root.scrolling || glide.running) return
+    root._auto = true
+    root.showNew()
+    root._auto = false
+  }
   function showNew() {
     for (var i = 0; i < root.rows.length; i++) if (root.rows[i].isNew) { list.positionViewAtIndex(i, ListView.End); return }
   }

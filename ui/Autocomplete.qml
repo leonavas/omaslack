@@ -16,6 +16,7 @@ Rectangle {
   property string text: input ? input.text : ""
   property string conv: ""
   property string threadTs: ""
+  property var kinds: ["command", "emoji", "user", "channel"]   // what it suggests
   readonly property var t: app.theme
   property var items: []
   property int sel: 0
@@ -62,6 +63,7 @@ Rectangle {
   }
 
   function show(kind, start, q) {
+    if (ac.kinds.indexOf(kind) < 0) { ac.items = []; return }
     if (ac.dismissedFor === kind + start) { ac.items = []; return }
     ac.kind = kind
     ac.start = start

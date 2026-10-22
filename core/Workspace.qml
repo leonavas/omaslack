@@ -2449,11 +2449,23 @@ Item {
     })
   }
 
-  function forward(conv, m, to, comment) {
-    var link = root.permalink(conv, m)
-    var text = comment ? comment + "\n" + link : link
-    root.send(to, text, {})
-    root.say(root.tr("Forwarded to ", "Encaminhada para ") + root.convLabel(to))
+  // A message's words go as its link, which Slack unfurls as a quote; its
+  // files are shared into the conversation (files.share, as Slack's "Share
+  // this file"), since a link to a DM or private channel shows nothing to
+  // whoever isn't in it. A file-only message is just its files, with the
+  // note before them (`blocks`: the note's rich_text, from the box).
+  function forward(conv, m, to, comment, blocks) {
+    var files = (m.files || []).filter(function(f) { return f.id && !f.external })
+    if (String(m.text || "").trim() || !files.length) {
+      var link = root.permalink(conv, m)
+      root.send(to, comment ? comment + "\n" + link : link, {})
+    } else if (comment) root.send(to, comment, { blocks: blocks })
+    var left = files.slice()
+    function next() {
+      if (!left.length) { root.say(root.tr("Forwarded to ", "Encaminhada para ") + root.convLabel(to)); return }
+      root.api("files.share", { file: left.shift().id, channel: to }, next, function(err) { root.say(root.errorText(err)) })
+    }
+    next()
   }
 
   // ---------------------------------------------------------------- conversations
