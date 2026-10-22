@@ -3,14 +3,16 @@
 
 The QML side owns every decision; this process only does what QML cannot:
 HTTPS with the session cookie (QML's XMLHttpRequest drops `Cookie`), a
-WebSocket it can also write to, files to disk, and the sign-in window's
-cookie database. One process per workspace, spoken to in JSON lines:
+WebSocket it can also write to, files to disk, the sign-in window's cookie
+database and the system keyring. One process per workspace, spoken to in
+JSON lines:
 
   stdin   {"id": 7, "op": "call", "method": "auth.test", "params": {...}}
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
 Ops: creds, call, download, post_file, multipart, read_cookie, write_private,
-ws_open, ws_send, ws_close. Socket traffic comes back unprompted as
+secret_store, secret_lookup, secret_clear, ws_open, ws_send, ws_close. Socket
+traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
 Credentials only ever arrive on stdin and only ever go to slack.com hosts.
 """
@@ -25,6 +27,7 @@ import socket
 import sqlite3
 import ssl
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -293,6 +296,13 @@ def xdg_dir(var, fallback):
     return os.path.join(os.environ.get(var) or os.path.join(os.path.expanduser("~"), fallback), "omaslack")
 
 
+def run_dir():
+    """The session's runtime dir (a tmpfs, gone at logout), or "" without
+    one: Service.qml's runDir."""
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(base, "omaslack") if base else ""
+
+
 COOKIE_SQL = ("select value, host_key from cookies where name = 'd' and (host_key = '.slack.com' or host_key like '%.slack.com'"
               " or host_key = 'slack.com') order by length(value) desc")
 
@@ -311,9 +321,10 @@ def cookie_rows(db, readonly):
 def op_read_cookie(msg):
     """The `d` cookie the sign-in window's browser profile saved (HttpOnly:
     the page itself can never read it). That profile is the plugin's own
-    (login/Login.qml, under $XDG_DATA_HOME/omaslack/webview), never one of
-    the user's browsers: any other path is refused."""
-    base = os.path.realpath(os.path.join(xdg_dir("XDG_DATA_HOME", ".local/share"), "webview"))
+    (login/Login.qml, under $XDG_RUNTIME_DIR/omaslack/webview, else
+    $XDG_DATA_HOME/omaslack/webview), never one of the user's browsers: any
+    other path is refused."""
+    base = os.path.realpath(os.path.join(run_dir() or xdg_dir("XDG_DATA_HOME", ".local/share"), "webview"))
     db = os.path.realpath(msg.get("db") or base)
     if db == base or os.path.commonpath([base, db]) != base:
         return {"ok": False, "error": "not the sign-in profile"}
@@ -367,6 +378,45 @@ def op_write_private(msg):
             pass
         raise
     return {"ok": True}
+
+
+# A locked keyring asks for its password first.
+SECRET_WAIT = 120
+
+
+def secret_tool(verb, team, extra=(), data=b""):
+    """secret-tool (libsecret) on the session's Secret Service, for one
+    workspace's entry (application=omaslack team=<id>). The secret only
+    goes through its stdin and stdout, never its arguments."""
+    if not team or not team.isascii() or not team.isalnum():
+        raise ValueError("bad team")
+    return subprocess.run(["secret-tool", verb] + list(extra) + ["application", "omaslack", "team", team],
+                          input=data, capture_output=True, timeout=SECRET_WAIT)
+
+
+def tool_error(p, fallback):
+    return p.stderr.decode("utf-8", "replace").strip() or fallback
+
+
+def op_secret_store(msg):
+    label = "--label=" + (msg.get("label") or "Omaslack")
+    p = secret_tool("store", msg.get("team") or "", [label], (msg.get("secret") or "").encode("utf-8"))
+    if p.returncode != 0:
+        return {"ok": False, "error": tool_error(p, "secret-tool store failed")}
+    return {"ok": True}
+
+
+def op_secret_lookup(msg):
+    p = secret_tool("lookup", msg.get("team") or "")
+    secret = p.stdout.decode("utf-8", "replace")
+    if p.returncode != 0 or not secret:
+        return {"ok": False, "error": tool_error(p, "not in the keyring")}
+    return {"ok": True, "secret": secret}
+
+
+def op_secret_clear(msg):
+    p = secret_tool("clear", msg.get("team") or "")
+    return {"ok": p.returncode == 0}
 
 
 class Socket:
@@ -578,6 +628,9 @@ OPS = {
     "post_file": op_post_file,
     "multipart": op_multipart,
     "read_cookie": op_read_cookie,
+    "secret_store": op_secret_store,
+    "secret_lookup": op_secret_lookup,
+    "secret_clear": op_secret_clear,
 }
 
 

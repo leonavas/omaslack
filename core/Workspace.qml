@@ -290,7 +290,18 @@ Item {
       network: tr("No connection to Slack.", "Sem conexão com o Slack."),
       app_access_restricted: tr("You don’t have permission to use this app. Contact your workspace admin for access.", "Você não tem permissão para usar este app. Entre em contato com o administrador do workspace para obter acesso."),
       request_already_resolved: tr("This request has already been handled.", "Esta solicitação já foi atendida."),
-      not_an_admin: tr("You don't have permission to do that.", "Você não tem permissão para isso.")
+      not_an_admin: tr("You don't have permission to do that.", "Você não tem permissão para isso."),
+      error_name_taken: tr("There's already an emoji with that name.", "Já existe um emoji com esse nome."),
+      error_name_taken_i18n: tr("There's already an emoji with that name.", "Já existe um emoji com esse nome."),
+      error_bad_name_i18n: tr("Names can only have lowercase letters, numbers, - and _.", "Nomes só podem ter letras minúsculas, números, - e _."),
+      error_missing_name: tr("Give the emoji a name.", "Dê um nome ao emoji."),
+      error_bad_upload: tr("Slack couldn't read that picture. Try a PNG, JPG or GIF.", "O Slack não conseguiu ler essa imagem. Tente PNG, JPG ou GIF."),
+      error_bad_format: tr("Slack couldn't read that picture. Try a PNG, JPG or GIF.", "O Slack não conseguiu ler essa imagem. Tente PNG, JPG ou GIF."),
+      no_image_uploaded: tr("Choose a picture first.", "Escolha uma imagem primeiro."),
+      error_too_big: tr("That picture is too large, even resized. Try a smaller one.", "Essa imagem é grande demais, mesmo redimensionada. Tente uma menor."),
+      resized_but_still_too_large: tr("That picture is too large, even resized. Try a smaller one.", "Essa imagem é grande demais, mesmo redimensionada. Tente uma menor."),
+      too_many_frames: tr("That GIF has too many frames.", "Esse GIF tem quadros demais."),
+      readonly: tr("Read-only mode: nothing was sent to Slack.", "Modo somente leitura: nada foi enviado ao Slack.")
     }
     if (code.indexOf("network") === 0) return map.network
     return map[code] || code.replace(/_/g, " ")
@@ -673,6 +684,8 @@ Item {
   property var rawPrefs: ({})
   property var bootPrefs: ({})        // client.userBoot's, until users.prefs.get answers
   property var teamPrefs: ({})        // the workspace's (client.userBoot's team.prefs)
+  // Slack leaves "Add Emoji" out when the workspace keeps custom emoji to its admins.
+  readonly property bool canAddEmoji: { root.usersRev; var u = root.users[root.me.id]; return !root.teamPrefs.emoji_only_admins || !!(u && u.admin) }
   property var teamPlan: null         // client.userBoot's team.plan ("" when free), null until known
   property real teamCreated: 0        // ... its date_create (seconds)
   property bool teamEnterprise: false // ... part of an Enterprise org
@@ -2817,6 +2830,30 @@ Item {
     } else info()
   }
 
+  // A custom emoji from a picture, as the web client's "Add emoji" dialog
+  // does (emoji.add, multipart). The list reloads right away; emoji_changed
+  // reloads it again for everyone else.
+  function addEmoji(name, path, cb) {
+    if (root.readOnlyMode) {
+      console.log("omaslack: read-only, skipped emoji.add")
+      Qt.callLater(function() { cb(root.errorText("readonly")) })
+      return
+    }
+    if (root.account.demo) {
+      var c = U.copy(root.customEmoji)
+      c[name] = "file://" + path
+      root.customEmoji = c
+      root.emojiRev++
+      Qt.callLater(function() { cb("") })
+      return
+    }
+    wire.multipart("emoji.add", { mode: "data", name: name }, path, "image", U.guessMime(path), function(r) {
+      if (!r.ok || !r.body || !r.body.ok) { cb(root.errorText((r.body && r.body.error) || r.error || ("http " + r.status))); return }
+      root.loadEmoji()
+      cb("")
+    })
+  }
+
   function profile(uid, cb) {
     root.api("users.info", { user: uid }, function(b) {
       root.applyUser(b.user)
@@ -3056,7 +3093,12 @@ Item {
   // environment (never a shared, guessable /tmp path).
   readonly property string cacheDir: root.app ? root.app.cacheDir
                                               : (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") || "") + "/.cache") + "/omaslack"
-  readonly property string cachePath: root.cacheDir + "/team-" + root.teamId + ".json"
+  // The workspace's cache (recent messages, the people, the conversations)
+  // goes to the app's runtime dir, a tmpfs: never on disk, kept across shell
+  // restarts and gone at logout. Without one, the cache dir.
+  readonly property string runDir: root.app ? root.app.runDir
+                                            : (Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/omaslack" : "")
+  readonly property string cachePath: (root.runDir || root.cacheDir) + "/team-" + root.teamId + ".json"
 
   FileView {
     id: cacheFile

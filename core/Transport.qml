@@ -61,6 +61,10 @@ Item {
   function readCookie(db, cb) { return _request({ op: "read_cookie", db: db }, cb) }
   // A file of the config dir, 0600 from the start and replaced in one step.
   function writePrivate(name, text, cb) { return _request({ op: "write_private", name: name, text: text }, cb) }
+  // A workspace's entry in the system keyring (secret-tool).
+  function secretStore(team, label, secret, cb) { return _request({ op: "secret_store", team: team, label: label, secret: secret }, cb) }
+  function secretLookup(team, cb) { return _request({ op: "secret_lookup", team: team }, cb) }
+  function secretClear(team, cb) { return _request({ op: "secret_clear", team: team }, cb) }
   function openSocket(url) { _write({ op: "ws_open", url: url }) }
   function sendSocket(data) { if (root.socketOpen) _write({ op: "ws_send", data: data }) }
   function closeSocket() { _write({ op: "ws_close" }) }
