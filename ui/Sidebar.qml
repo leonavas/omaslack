@@ -248,6 +248,9 @@ Rectangle {
       { separator: true },
       { label: side.app.tr("Profile", "Perfil"), icon: "󰀄", action: function() { w.profileUser = w.me.id; w.thread = null } },
       { label: side.app.tr("Preferences", "Preferências"), icon: "󰒓", hint: "Ctrl+,", action: function() { side.win.dialog("preferences") } },
+      // Slack's Tools & settings › Customize workspace, on its emoji page in the browser.
+      { label: side.app.tr("Customize workspace", "Personalizar workspace"), icon: "󰏘", hint: "󰏌", enabled: !!w.team.domain,
+        action: function() { Qt.openUrlExternally("https://" + w.team.domain + ".slack.com/customize/emoji") } },
       { label: side.app.tr("Browse channels", "Navegar pelos canais"), icon: "󰐣", action: function() { side.win.dialog("browse") } },
       { label: side.app.tr("Create a section", "Criar uma seção"), icon: "󰉋", action: function() { side.win.dialog("newSection") } },
       { label: side.app.tr("Mark all as read", "Marcar tudo como lido"), icon: "󰄬", hint: "Shift+Esc", action: function() { w.markAllRead() } },

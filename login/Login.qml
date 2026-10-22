@@ -5,7 +5,8 @@ import QtWebEngine
 // The sign-in window: Slack's own sign-in page in Qt WebEngine, run by Qt's
 // `qml` runtime in a process of its own (WebEngine can't live inside the
 // shell). Once the person is in, it prints the session it found and quits;
-// the browser profile keeps the HttpOnly `d` cookie on disk for the plugin.
+// the browser profile (in the session's runtime dir, a tmpfs) keeps the
+// HttpOnly `d` cookie for the plugin.
 //
 //   qml Login.qml -- <profile dir> <known team ids,…> <lang> <workspace or ""> [cache dir] [user agent]
 //

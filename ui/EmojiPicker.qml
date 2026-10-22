@@ -623,8 +623,8 @@ Item {
       Column {
         anchors.left: foot.it ? big.right : parent.left
         anchors.leftMargin: p.t.sp(foot.it ? 12 : 16)
-        anchors.right: parent.right
-        anchors.rightMargin: p.t.sp(14)
+        anchors.right: addBtn.visible ? addBtn.left : parent.right
+        anchors.rightMargin: p.t.sp(addBtn.visible ? 10 : 14)
         anchors.verticalCenter: parent.verticalCenter
         spacing: p.t.sp(2)
         Text {
@@ -656,6 +656,18 @@ Item {
           font.family: p.t.font
           font.pixelSize: p.t.fsSmall
         }
+      }
+      // Slack's "Add Emoji": the picker closes and its dialog opens.
+      SButton {
+        id: addBtn
+        visible: !!p.ws && p.ws.canAddEmoji && !!p.win
+        app: p.app
+        small: true
+        text: p.app.tr("Add Emoji", "Adicionar emoji")
+        anchors.right: parent.right
+        anchors.rightMargin: p.t.sp(12)
+        anchors.verticalCenter: parent.verticalCenter
+        onClicked: { var w = p.win; p.close(); w.dialog("addEmoji", {}) }
       }
     }
 

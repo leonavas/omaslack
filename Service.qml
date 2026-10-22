@@ -28,6 +28,10 @@ Item {
   readonly property string configDir: (Quickshell.env("XDG_CONFIG_HOME") || home + "/.config") + "/omaslack"
   readonly property string cacheDir: (Quickshell.env("XDG_CACHE_HOME") || home + "/.cache") + "/omaslack"
   readonly property string dataDir: (Quickshell.env("XDG_DATA_HOME") || home + "/.local/share") + "/omaslack"
+  // The session's runtime dir (a tmpfs, the user's alone, gone at logout):
+  // the workspaces' caches and the sign-in window's profile, never on disk.
+  // "" without one (they fall back to cacheDir and dataDir).
+  readonly property string runDir: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/omaslack" : ""
   readonly property string downloadsDir: Quickshell.env("XDG_DOWNLOAD_DIR") || home + "/Downloads"
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
 
@@ -136,11 +140,19 @@ Item {
   function saveCollapsed(team, map) { root.setTeamSetting(team, "collapsed", map) }
 
   // ---------------------------------------------------------------- accounts
-  // [{teamId, token, cookie, domain, name, userId, icon}] — the sessions,
-  // readable only by the user.
+  // [{teamId, token, cookie, domain, name, userId, icon}] — the sessions.
+  // Their secrets (token and cookie) live in the system keyring (the
+  // Secret Service, through secret-tool), one entry per workspace, and
+  // accounts.json only says so (`vault: "keyring"`). Without a keyring they
+  // stay in accounts.json, readable only by the user, as they always did.
   property var accounts: []
   property bool accountsLoaded: false
   property string currentTeam: ""
+  // What each workspace has in the keyring, as stored (team → secretOf).
+  property var _vaulted: ({})
+  // Off once the keyring refuses a secret: for the rest of the run they're
+  // saved in the file.
+  property bool _vaultWorks: true
 
   FileView {
     id: accountsFile
@@ -148,9 +160,11 @@ Item {
     printErrors: false
     blockLoading: true
     onLoaded: {
-      try { root.accounts = (JSON.parse(text()) || {}).accounts || [] } catch (e) { root.accounts = [] }
-      if (root.demo) root.accounts = Demo.accounts.slice()
-      root.accountsLoaded = true
+      var list = []
+      try { list = (JSON.parse(text()) || {}).accounts || [] } catch (e) { list = [] }
+      if (root.demo) list = Demo.accounts.slice()
+      // Once the whole app is there (utilWire reads the keyring).
+      Qt.callLater(function() { root.unlockAccounts(list) })
     }
     onLoadFailed: {
       root.accounts = root.demo ? Demo.accounts.slice() : []
@@ -160,11 +174,73 @@ Item {
   // Pretend workspaces (lib/Demo.js), for trying the app without signing in.
   readonly property bool demo: Quickshell.env("SLACKQS_DEMO") === "1"
 
-  // Written by transport.py (write_private): 0600 from its first byte and
-  // replaced in one step, never a moment readable by others or half there.
+  function secretOf(a) { return JSON.stringify({ token: a.token || "", cookie: a.cookie || "" }) }
+
+  // The secrets of the workspaces kept in the keyring, before any of them
+  // starts. One that can't be read (the keyring locked and its prompt
+  // dismissed, the entry deleted, no keyring any more) asks to sign in
+  // again. Sessions still in the file (saved by a version before the
+  // keyring, or while there was none) move into it.
+  function unlockAccounts(list) {
+    var left = list.filter(function(a) { return a.vault === "keyring" }).length
+    function done() {
+      root.accounts = list
+      root.accountsLoaded = true
+      if (list.some(function(a) { return a.token && root._vaulted[a.teamId] !== root.secretOf(a) })) root.saveAccounts()
+    }
+    if (!left) { done(); return }
+    list.forEach(function(a) {
+      if (a.vault !== "keyring") return
+      utilWire.secretLookup(a.teamId, function(r) {
+        var s = null
+        try { s = r.ok ? JSON.parse(r.secret) : null } catch (e) { s = null }
+        if (s && s.token) {
+          a.token = s.token
+          a.cookie = s.cookie || ""
+          root._vaulted[a.teamId] = root.secretOf(a)
+        } else {
+          console.warn("omaslack: couldn't read the session of", a.teamId, "from the keyring:", r.error || "bad entry")
+          root.sessionExpired(a.teamId, "keyring")
+        }
+        if (--left === 0) done()
+      })
+    })
+  }
+
+  // Each session's secrets go to the keyring first, when they changed;
+  // then accounts.json, without the secrets the keyring took (with those
+  // it didn't: no keyring, the file as before).
   function saveAccounts() {
     if (root.demo) return
-    utilWire.writePrivate("accounts.json", JSON.stringify({ accounts: root.accounts }, null, 2), function(r) {
+    var todo = root._vaultWorks ? root.accounts.filter(function(a) { return a.token && root._vaulted[a.teamId] !== root.secretOf(a) }) : []
+    var left = todo.length
+    if (!left) { root.writeAccounts(); return }
+    todo.forEach(function(a) {
+      var secret = root.secretOf(a)
+      utilWire.secretStore(a.teamId, "Omaslack: " + (a.name || a.domain || a.teamId), secret, function(r) {
+        if (r.ok) root._vaulted[a.teamId] = secret
+        else { root._vaultWorks = false; console.warn("omaslack: no keyring, the session stays in accounts.json:", r.error) }
+        if (--left === 0) root.writeAccounts()
+      })
+    })
+  }
+
+  // Written by transport.py (write_private): 0600 from its first byte and
+  // replaced in one step, never a moment readable by others or half there.
+  // A session in the keyring is only marked; so is one that's there but
+  // couldn't be read this run, kept for the next.
+  function writeAccounts() {
+    var list = root.accounts.map(function(a) {
+      var o = U.copy(a)
+      delete o.vault
+      if (a.token ? root._vaulted[a.teamId] === root.secretOf(a) : a.vault === "keyring") {
+        delete o.token
+        delete o.cookie
+        o.vault = "keyring"
+      }
+      return o
+    })
+    utilWire.writePrivate("accounts.json", JSON.stringify({ accounts: list }, null, 2), function(r) {
       if (!r.ok) console.warn("omaslack: couldn't save the accounts:", r.error)
     })
   }
@@ -191,15 +267,17 @@ Item {
     root.setSetting("active", acc.teamId)
   }
 
-  // Signing out forgets the workspace here, and only here: its session, its
-  // cache and fetched files, its drafts, sent messages and place in
-  // settings.json. Nothing is revoked on Slack's side (a pasted session may
-  // be your browser's own). With the last one gone, the sign-in window's
-  // browser profile (its cookies) and cache go too.
+  // Signing out forgets the workspace here, and only here: its session (and
+  // its keyring entry), its cache and fetched files, its drafts, sent
+  // messages and place in settings.json. Nothing is revoked on Slack's side
+  // (a pasted session may be your browser's own). With the last one gone,
+  // the sign-in window's browser profile (its cookies) and cache go too.
   function signOut(teamId) {
     root.workspaces.forEach(function(w) { if (w.teamId === teamId) w.signedOut = true })
     root.accounts = root.accounts.filter(function(a) { return a.teamId !== teamId })
     root.saveAccounts()
+    delete root._vaulted[teamId]
+    utilWire.secretClear(teamId)
     if (root.currentTeam === teamId) root.currentTeam = root.accounts.length ? root.accounts[0].teamId : ""
     var teams = U.copy(root.settings.teams || {})
     delete teams[teamId]
@@ -207,7 +285,7 @@ Item {
     if (root.setting("active", "") === teamId) root.setSetting("active", root.currentTeam)
     // A Slack id, or nothing is deleted (files/<id> sits beside files/avatars).
     if (!/^[A-Z0-9]+$/.test(String(teamId))) return
-    var gone = [root.cacheDir + "/team-" + teamId + ".json", root.cacheDir + "/files/" + teamId]
+    var gone = [(root.runDir || root.cacheDir) + "/team-" + teamId + ".json", root.cacheDir + "/files/" + teamId]
     if (!root.accounts.length && !loginProc.running) gone.push(root.webProfile, root.webCache)
     Quickshell.execDetached(["rm", "-rf", "--"].concat(gone))
   }
@@ -264,9 +342,11 @@ Item {
 
   // The token stopped working: back to the sign-in screen for it.
   property var expired: ({})
+  // "keyring": its secrets couldn't be read, which says more than the
+  // refusal its workspace then gets from Slack.
   function sessionExpired(teamId, error) {
     var e = U.copy(root.expired)
-    e[teamId] = error
+    if (e[teamId] !== "keyring") e[teamId] = error
     root.expired = e
   }
 
@@ -684,7 +764,9 @@ Item {
   property string loginError: ""
   property string loginStatus: ""
   property var _loginResult: null
-  readonly property string webProfile: root.dataDir + "/webview"
+  // Its cookies and storage hold the sessions: in the runtime dir, never on
+  // disk (transport.py's op_read_cookie looks for it in the same place).
+  readonly property string webProfile: (root.runDir || root.dataDir) + "/webview"
   // The sign-in window's HTTP cache (its profile's cachePath, Login.qml).
   readonly property string webCache: root.cacheDir + "/webview"
 
@@ -701,9 +783,10 @@ Item {
 
   // The sign-in window's caches (Slack's pages and scripts, ~100 MB: the
   // HTTP cache, and the code, GPU and service-worker caches it leaves in
-  // the profile), useless once it's closed. Cookies and storage stay: they
-  // keep the window signed in, so adding a workspace or signing in again
-  // skips the password. A moment after the window quits (its web processes
+  // the profile), useless once it's closed. Cookies and storage stay until
+  // you log out (the profile is in the runtime dir): they keep the window
+  // signed in, so adding a workspace or signing in again skips the
+  // password. A moment after the window quits (its web processes
   // go with it), and never while one is open again.
   Timer { id: purgeSoon; interval: 2000; onTriggered: root.purgeWebCache() }
   function purgeWebCache() {
@@ -1014,7 +1097,12 @@ Item {
     // Ours alone: the dirs 0700 (an existing one too), the sessions 0600
     // (one saved looser by an older version, or by hand).
     Quickshell.execDetached(["sh", "-c", 'mkdir -p -m 700 -- "$@" && chmod 700 -- "$@"; [ -f "$1/accounts.json" ] && chmod 600 -- "$1/accounts.json"; exit 0',
-                             "omaslack-dirs", root.configDir, root.cacheDir, root.dataDir])
+                             "omaslack-dirs", root.configDir, root.cacheDir, root.runDir || root.dataDir])
+    // What versions before the runtime dir left on disk: the workspaces'
+    // caches (messages, the people) and the sign-in window's profile (the
+    // sessions, in its cookies and storage). The first start after fetches
+    // the caches again; the next sign-in asks for the password once.
+    if (root.runDir) Quickshell.execDetached(["sh", "-c", 'rm -rf -- "$1"/team-*.json "$2"', "omaslack-old", root.cacheDir, root.dataDir])
     photoList.running = true
     Registry.service = root
     root.ready = true

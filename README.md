@@ -14,7 +14,7 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 - **Sidebar like Slack's**: starred, custom sections with their emoji, Silenced, Channels, DMs and Apps. You can rename, create and delete sections and drag conversations between them. Unread bars and mention badges are shown, and an *Unreads* switch filters the lists.
 - **Real time** over Slack's websocket: messages, edits, reactions, typing, presence and read state.
 - **WYSIWYG composer** with a formatting toolbar (bold, italic, underline, strike, code, links, lists, quotes, code blocks). Slack markdown turns into formatting as you type. Mentions appear as pills and emoji as pictures. Autocomplete covers `:emoji:`, `@people`, `#channels` and `/commands`. You can attach files or paste images. Messages go out as Slack rich text, and you can edit them in place.
-- **Animated custom emoji** play in messages, in reactions and inside the composer. Slack's emoji set is included, with skin tones and the workspace's custom emoji. You can switch to your system emoji font instead.
+- **Animated custom emoji** play in messages, in reactions and inside the composer. Slack's emoji set is included, with skin tones and the workspace's custom emoji. You can switch to your system emoji font instead. **Add Emoji** in the picker uploads a new one to the workspace, and **Customize workspace** in the workspace menu opens Slack's emoji page in the browser.
 - **Threads**: a side pane, "also send to channel", and a Threads view of the threads you follow.
 - **Ctrl+K search**: a quick switcher for conversations and people, plus Slack's message search with previews and its modifiers (`in:`, `from:`, `has:`, `before:`, `after:`). Deactivated people show up too, and opening one shows the **archives of the deactivated account** (their DM, read-only).
 - **Files**: a rail item with a hover card of recent and starred files, and a full page with All / Created by you / Shared with you, type filters, sorting, search, download and star.
@@ -100,17 +100,20 @@ omarchy plugin remove omaslack
 That removes the plugin but leaves your data. To delete that too (your sessions, preferences, drafts, caches and the sign-in window's profile):
 
 ```sh
-rm -rf ~/.config/omaslack ~/.cache/omaslack ~/.local/share/omaslack
+secret-tool clear application omaslack
+rm -rf ~/.config/omaslack ~/.cache/omaslack ~/.local/share/omaslack "$XDG_RUNTIME_DIR/omaslack"
 ```
 
 If you set `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` or `XDG_DATA_HOME`, the folders are under those instead. Removing the files doesn't end your sessions on Slack's servers (see [Signing out](#signing-out)).
 
 ## How sign-in works
 
-- **Sign in with Slack** opens Slack's own sign-in page (`slack.com`, `<workspace>.slack.com`, `app.slack.com`) in a dedicated browser window with its own profile, kept in `~/.local/share/omaslack/webview`. You sign in there as you would in a browser, single sign-on included. Once you're in, Omaslack reads the session token (`xoxc-…`) from that window's local storage and the `d` cookie from that profile's own cookie database. It never looks at your browsers or at the Slack desktop app. The window's web cache is deleted when it closes; its cookies stay, so the next sign-in skips the password. The window runs with Chromium's sandbox on (`QTWEBENGINE_DISABLE_SANDBOX` is cleared for it); if it can't start on your system, sign in with a token instead.
+- **Sign in with Slack** opens Slack's own sign-in page (`slack.com`, `<workspace>.slack.com`, `app.slack.com`) in a dedicated browser window with its own profile, kept in `$XDG_RUNTIME_DIR/omaslack/webview` (in memory, never on disk). You sign in there as you would in a browser, single sign-on included. Once you're in, Omaslack reads the session token (`xoxc-…`) from that window's local storage and the `d` cookie from that profile's own cookie database. It never looks at your browsers or at the Slack desktop app. The window's web cache is deleted when it closes; its cookies stay until you log out, so signing in again before that skips the password. The window runs with Chromium's sandbox on (`QTWEBENGINE_DISABLE_SANDBOX` is cleared for it); if it can't start on your system, sign in with a token instead.
 - **Sign in with a token** (the small link below the button) takes a `xoxc-…` token with its `xoxd-…` cookie, or a `xoxp-…` user token, pasted in by hand.
 
-Either way, the credentials are saved to `~/.config/omaslack/accounts.json` with mode 600, written in one step (a private temporary file renamed over it), so the file is never readable by others or left half-written. When the app starts, its config, cache and data folders are set to mode 700. The credentials are only ever sent to `slack.com` hosts.
+Either way, the credentials (token and cookie) are saved to the system keyring through the Secret Service (`secret-tool`, from libsecret; gnome-keyring on Omarchy), one entry per workspace (`application omaslack team <id>`), and `~/.config/omaslack/accounts.json` only lists the workspaces. Without a keyring (no `secret-tool`, no Secret Service running), the credentials go into `accounts.json` itself, as in versions before 0.6.0. Either way that file has mode 600 and is written in one step (a private temporary file renamed over it), so it's never readable by others or left half-written. When the app starts, its config, cache and runtime folders are set to mode 700. The credentials are only ever sent to `slack.com` hosts.
+
+If the keyring can't be read when the app starts (it's locked and you dismissed its password prompt, or its entry was deleted), that workspace asks you to sign in again.
 
 The sign-in window and the backend identify themselves to Slack as a current desktop Chrome (the version is computed from today's date), because Slack's pages refuse browsers it considers outdated.
 
@@ -138,18 +141,21 @@ Your credentials only go to `slack.com` and its subdomains; requests to every ot
 
 | Path | Contents |
 |---|---|
-| `~/.config/omaslack/accounts.json` | Your credentials (tokens and cookies), mode 600, replaced in one step on every save |
+| System keyring (`application omaslack team <id>`) | Your credentials (token and cookie), one entry per workspace |
+| `~/.config/omaslack/accounts.json` | Your workspaces (name, domain, icon), mode 600, replaced in one step on every save. Without a keyring, the credentials too |
 | `~/.config/omaslack/settings.json` | Preferences, drafts, recently sent messages and the last conversation you had open |
-| `~/.cache/omaslack/team-<id>.json` | Per workspace: recent messages of your recent conversations and the user directory, so the app starts fast |
+| `$XDG_RUNTIME_DIR/omaslack/team-<id>.json` | Per workspace: recent messages of your recent conversations and the user directory, so the app starts fast. In memory (a tmpfs), never on disk: kept across shell restarts, gone when you log out |
 | `~/.cache/omaslack/files/<team>/` | Images and files fetched with your session |
 | `~/.cache/omaslack/files/avatars/` | Profile photos and workspace icons |
 | `~/.cache/omaslack/paste/` | Images you pasted into the composer |
 | `~/.cache/omaslack/webview/` | The sign-in window's web cache, deleted when the window closes |
-| `~/.local/share/omaslack/webview/` | The sign-in window's browser profile (cookies and storage, so the next sign-in skips the password) |
+| `$XDG_RUNTIME_DIR/omaslack/webview/` | The sign-in window's browser profile (cookies and storage, so signing in again skips the password). In memory, gone when you log out |
 | `$XDG_RUNTIME_DIR/omaslack-update.*` | How the last update went, read back once the shell restarts |
 | `~/Downloads` (or `$XDG_DOWNLOAD_DIR`) | Files you download. Nothing there is overwritten: a name already taken becomes `name (1).ext`, `name (2).ext`… |
 
-Cached files and photos unused for 7 days, and pasted images older than 7 days, are deleted. The config, cache and data folders are set to mode 700 when the app starts. The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`) are respected. Preferences → Advanced opens these folders.
+Cached files and photos unused for 7 days, and pasted images older than 7 days, are deleted. The config, cache and runtime folders are set to mode 700 when the app starts. The XDG variables (`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`) are respected; without `XDG_RUNTIME_DIR`, the workspace caches go to `~/.cache/omaslack` and the sign-in profile to `~/.local/share/omaslack`, as in versions before 0.6.0. Preferences → Advanced opens the config and cache folders.
+
+Coming from a version before 0.6.0, the first start moves the credentials from `accounts.json` into the keyring and deletes what used to be on disk: the workspace caches (`~/.cache/omaslack/team-<id>.json`, fetched again from Slack) and the sign-in profile (`~/.local/share/omaslack`, so the next sign-in asks for the password once). A deleted file isn't wiped from an SSD or a copy-on-write filesystem such as btrfs; full-disk encryption (Omarchy's default) covers that.
 
 ## Links and files
 
@@ -161,11 +167,11 @@ Cached files and photos unused for 7 days, and pasted images older than 7 days, 
 
 Signing out of a workspace deletes, on this computer:
 
-- that account's credentials, from `accounts.json`;
-- its cache file (`~/.cache/omaslack/team-<id>.json`) and its cached files (`~/.cache/omaslack/files/<team>/`);
+- that account's credentials, from the keyring and `accounts.json`;
+- its cache file (`$XDG_RUNTIME_DIR/omaslack/team-<id>.json`) and its cached files (`~/.cache/omaslack/files/<team>/`);
 - its drafts, recently sent messages, last conversation and collapsed sections, from `settings.json`.
 
-Signing out of the last workspace also deletes the sign-in window's browser profile (`~/.local/share/omaslack/webview`) and its cache (`~/.cache/omaslack/webview`), so the next sign-in starts from scratch.
+Signing out of the last workspace also deletes the sign-in window's browser profile (`$XDG_RUNTIME_DIR/omaslack/webview`) and its cache (`~/.cache/omaslack/webview`), so the next sign-in starts from scratch.
 
 It does not end the session on Slack's servers: do that from your account settings in Slack.
 

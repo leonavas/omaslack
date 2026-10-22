@@ -372,6 +372,8 @@ Item {
     items.push({ label: rail.app.tr("Add a workspace", "Adicionar um workspace"), icon: "󰐕", action: function() { rail.win.dialog("addWorkspace") } })
     items.push({ label: rail.app.tr("Invite people to ", "Convidar pessoas para ") + w.team.name, icon: "󰠁", action: function() { rail.win.dialog("invite") } })
     items.push({ label: rail.app.tr("Preferences", "Preferências"), icon: "󰒓", action: function() { rail.win.dialog("preferences") } })
+    items.push({ label: rail.app.tr("Customize workspace", "Personalizar workspace"), icon: "󰏘", hint: "󰏌", enabled: !!w.team.domain,
+                 action: function() { Qt.openUrlExternally("https://" + w.team.domain + ".slack.com/customize/emoji") } })
     items.push({ separator: true })
     items.push({ label: rail.app.tr("Sign out of ", "Sair de ") + w.team.name, icon: "󰍃", danger: true, action: function() { rail.win.dialog("confirm", {
       title: rail.app.tr("Sign out of ", "Sair de ") + w.team.name + "?",

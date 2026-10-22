@@ -81,7 +81,10 @@ Rectangle {
             anchors.centerIn: parent
             width: parent.width - lv.t.sp(20)
             wrapMode: Text.Wrap
-            text: lv.app.tr("The session for ", "A sessão de ") + lv.teamName(parent.modelData) + lv.app.tr(" expired. Sign in again.", " expirou. Entre de novo.")
+            text: lv.app.tr("The session for ", "A sessão de ") + lv.teamName(parent.modelData)
+                  + (lv.app.expired[parent.modelData] === "keyring"
+                     ? lv.app.tr(" couldn't be read from the system keyring. Sign in again.", " não pôde ser lida do chaveiro do sistema. Entre de novo.")
+                     : lv.app.tr(" expired. Sign in again.", " expirou. Entre de novo."))
             textFormat: Text.PlainText
             color: lv.t.fg
             font.family: lv.t.font
