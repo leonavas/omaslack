@@ -173,7 +173,7 @@ Item {
 
     // Channel: # / lock / shared.
     Glyph {
-      visible: (r.row.kind === "nav" && !r.row.user) || (r.isConv && (r.row.convKind === "channel" || r.row.convKind === "private")) || r.row.kind === "add"
+      visible: r.typingNames.length === 0 && ((r.row.kind === "nav" && !r.row.user) || (r.isConv && (r.row.convKind === "channel" || r.row.convKind === "private")) || r.row.kind === "add")
       anchors.centerIn: parent
       app: r.app
       icon: r.row.kind === "nav" ? (r.row.icon || "") : (r.row.kind === "add" ? "󰐕" : (r.row.convKind === "private" ? "󰌾" : (r.row.ext ? "󰇧" : "#")))
