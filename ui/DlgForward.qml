@@ -3,10 +3,12 @@ import QtQuick.Controls
 import Quickshell
 import "../lib/Util.js" as U
 import "../lib/Model.js" as Model
+import "../lib/RichDoc.js" as RD
 
 // Slack's "Forward message": where to (a channel, a DM, a group DM or
 // anyone else), an optional note, and the message as it will be quoted.
-// Forwarding posts the message's link, which Slack unfurls as a quote.
+// Forwarding posts the message's link, which Slack unfurls as a quote,
+// and shares its files there (Workspace.forward).
 DialogFrame {
   id: d
   title: app.tr("Forward message", "Encaminhar mensagem")
@@ -169,7 +171,7 @@ DialogFrame {
     if (!o) return
     d.dest = o
     input.text = ""
-    comment.area.forceActiveFocus()
+    comment.focusInput()
   }
   function unpick() { d.dest = null; input.forceActiveFocus() }
 
@@ -180,17 +182,19 @@ DialogFrame {
     list.positionViewAtIndex(d.sel, ListView.Contain)
   }
 
+  // Then the conversation it went to opens, as in Slack.
+  property bool _sent: false
   function forward() {
-    if (!d.dest || !d.msg) return
-    var w = d.ws, from = d.conv, m = d.msg, note = comment.text.trim(), to = d.dest
-    if (to.kind === "conv") {
-      d.closed()
-      w.forward(from, m, to.id, note)
-      return
-    }
-    // Someone without a DM yet: open it first (errors come as a toast).
+    if (!d.dest || !d.msg || d._sent) return
+    d._sent = true
+    var w = d.ws, from = d.conv, m = d.msg, to = d.dest
+    var out = comment.outgoing()
+    var note = RD.toMarkup(out).trim(), blocks = RD.toBlocks(out)
+    function go(id) { w.forward(from, m, id, note, blocks); w.open(id) }
     d.closed()
-    w.openDm([to.id], function(id) { w.forward(from, m, id, note) })
+    if (to.kind === "conv") { go(to.id); return }
+    // Someone without a DM yet: open it first (errors come as a toast).
+    w.openDm([to.id], go)
   }
 
   Shortcut { sequences: ["Ctrl+Return", "Ctrl+Enter"]; onActivated: d.forward() }
@@ -389,12 +393,18 @@ DialogFrame {
       }
     }
 
-    SArea {
+    // The note: the message box itself (emoji pictures, pills,
+    // formatting), sent with the forward.
+    Composer {
       id: comment
       app: d.app
+      win: d.win
+      ws: d.ws
+      note: true
       width: parent.width
-      implicitHeight: d.t.sp(76)
-      placeholderText: d.app.tr("Add a message, if you'd like.", "Adicione uma mensagem, se quiser.")
+      z: 3
+      placeholder: d.app.tr("Add a message, if you'd like.", "Adicione uma mensagem, se quiser.")
+      onSubmitted: d.forward()
     }
 
     // ------------------------------------------------------------ preview

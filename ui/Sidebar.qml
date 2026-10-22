@@ -106,14 +106,8 @@ Rectangle {
       sidebar: side
     }
 
-    // The wheel / touchpad takes over from a pill's glide. Only notices
-    // it: a blocking handler would keep the list from scrolling.
-    WheelHandler {
-      acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-      blocking: false
-      target: null
-      onWheel: glide.stop()
-    }
+    // The wheel / touchpad (further than Qt's) takes over from a pill's glide.
+    WheelScroll { view: list; step: side.t.sp(130); onWheeled: glide.stop() }
   }
 
   Glide { id: glide; view: list }

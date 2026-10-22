@@ -14,7 +14,9 @@ import "../lib/Registry.js" as Reg
 // quotes, lists, links, emoji pictures, mention pills, and its markdown
 // turning into formatting as you type), autocomplete for :emoji:, @people,
 // #channels and /commands, files and pasted images, and the send button.
-// The same box edits a message in place (`editTs`).
+// The same box edits a message in place (`editTs`), and writes a note
+// that someone else sends (`note`: Forward's; no drafts, files or send
+// button, Enter is `submitted`).
 //
 // The text is a document (lib/RichDoc.js) the TextEdit only shows: what Qt
 // types, deletes or pastes is read back as a change of the plain text and
@@ -37,7 +39,9 @@ Rectangle {
   property bool showFormatting: app.setting("composerToolbar", true) !== false
   property var files: []         // [{path, name, size, mime, preview}]
   property Item messageList: null // the messages above: ↑ in the empty box selects them (MessageList)
+  property bool note: false
   signal done()
+  signal submitted()
 
   // The document, and what the editor shows of it.
   property var doc: RD.empty()
@@ -81,11 +85,11 @@ Rectangle {
       box.loadEdit()
       Qt.callLater(function() { var w = box.Window.window; box._before = w ? w.activeFocusItem : null; input.forceActiveFocus(); input.cursorPosition = input.length })
     }
-    else box.restoreDraft()
+    else if (!box.note) box.restoreDraft()
   }
   Component.onDestruction: box.saveDraftNow()
-  onConvChanged: if (!box.editing) { box.saveDraftNow(); box.restoreDraft() }
-  onThreadTsChanged: if (!box.editing) { box.saveDraftNow(); box.restoreDraft() }
+  onConvChanged: if (!box.editing && !box.note) { box.saveDraftNow(); box.restoreDraft() }
+  onThreadTsChanged: if (!box.editing && !box.note) { box.saveDraftNow(); box.restoreDraft() }
 
   // ---------------------------------------------------------------- the workspace
   function dctx() {
@@ -270,7 +274,7 @@ Rectangle {
   }
 
   function touched() {
-    if (box.editing || !box.ws) return
+    if (box.editing || box.note || !box.ws) return
     box._draftFor = box.draftKey()
     draftSave.restart()
     if (!RD.isEmpty(box.doc)) box.ws.sendTyping(box.conv, box.threadTs)
@@ -312,6 +316,7 @@ Rectangle {
   // ---------------------------------------------------------------- send
   function submit() {
     if (complete.visible && complete.pick()) return
+    if (box.note) { box.submitted(); return }
     var d = box.outgoing()
     var typed = RD.toMarkup(d)
     var blocks = RD.toBlocks(d)
@@ -504,7 +509,7 @@ Rectangle {
       if (why && box.win) box.win.toast(why)
     }
   }
-  function pickFiles() { if (!picker.running) picker.running = true }
+  function pickFiles() { if (!box.note && !picker.running) picker.running = true }
 
   Process {
     id: statProc
@@ -530,6 +535,7 @@ Rectangle {
   // One path or a list; one stat call covers every queued path, and paths
   // that arrive while it runs wait for the next.
   function addFile(paths) {
+    if (box.note) return
     statProc.queue = statProc.queue.concat(paths)
     box.statNext()
   }
@@ -736,7 +742,7 @@ Rectangle {
           // ↑ in the empty box: the messages above take the keyboard, from
           // the newest (Slack's message selection). Ctrl+↑ edits your last
           // one, as ↑ does in a box with no list above (Threads).
-          if (key === Qt.Key_Up && !alt && !shift && RD.isEmpty(box.doc) && !box.editing) {
+          if (key === Qt.Key_Up && !alt && !shift && RD.isEmpty(box.doc) && !box.editing && !box.note) {
             if (!ctrl && box.messageList) { if (box.messageList.selectLatest()) event.accepted = true; return }
             var last = box.ws.lastMine(box.conv, box.threadTs)
             if (last) { box.ws.editing = { conv: box.conv, ts: last.ts }; event.accepted = true }
@@ -760,7 +766,7 @@ Rectangle {
           if (ctrl && shift && (key === Qt.Key_7 || key === Qt.Key_Ampersand)) { box.toggleKind("ol"); event.accepted = true; return }
           if (ctrl && shift && key === Qt.Key_U) { box.insertLink(); event.accepted = true; return }
           if (ctrl && !shift && key === Qt.Key_U) { box.pickFiles(); event.accepted = true; return }
-          if (key === Qt.Key_Escape && !shift && !box.editing) { if (box.threadTs) box.ws.closeThread(); else box.ws.markRead(box.conv); event.accepted = true; return }
+          if (key === Qt.Key_Escape && !shift && !box.editing && !box.note) { if (box.threadTs) box.ws.closeThread(); else box.ws.markRead(box.conv); event.accepted = true; return }
         }
       }
     }
@@ -805,6 +811,7 @@ Rectangle {
         spacing: box.t.sp(4)
         visible: !box.editing
         Rectangle {
+          visible: !box.note
           width: box.t.sp(28); height: width; radius: width / 2
           anchors.verticalCenter: parent.verticalCenter
           color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.1)
@@ -819,7 +826,7 @@ Rectangle {
                     onClicked: box.win.emojiPicker(emojiBtn, function(name) { box.insertEmoji(name); input.forceActiveFocus() }, {}) }
         FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Mention someone", "Mencionar alguém"); onClicked: box.mention() }
         Item { width: box.t.sp(8); height: 1 }
-        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.alpha(box.t.fgDim, 0.7); tip: box.app.tr("Run a shortcut", "Executar um atalho")
+        FmtButton { visible: !box.note; app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.alpha(box.t.fgDim, 0.7); tip: box.app.tr("Run a shortcut", "Executar um atalho")
                     onClicked: { if (RD.isEmpty(box.doc)) box.change(RD.insertText(box.doc, 0, 0, "/", null).doc, 1); input.forceActiveFocus() } }
       }
 
@@ -837,7 +844,7 @@ Rectangle {
       // a thin line, each half lighting up on its own.
       Rectangle {
         id: sendPill
-        visible: !box.editing
+        visible: !box.editing && !box.note
         anchors.right: parent.right
         anchors.rightMargin: box.t.sp(8)
         anchors.verticalCenter: parent.verticalCenter
@@ -890,7 +897,7 @@ Rectangle {
   // the left), Slack's reminder of the keys once something is typed. It
   // sits in the space below the box, so the box keeps its height.
   Text {
-    visible: box.hasText && !box.editing
+    visible: box.hasText && !box.editing && !box.note
     anchors.right: parent.right
     anchors.rightMargin: box.t.sp(2)
     anchors.top: parent.bottom
@@ -913,6 +920,7 @@ Rectangle {
     text: box.acText
     conv: box.conv
     threadTs: box.threadTs
+    kinds: box.note ? ["emoji", "user", "channel"] : ["command", "emoji", "user", "channel"]
     anchors.left: parent.left
     anchors.bottom: parent.top
     anchors.bottomMargin: box.t.sp(4)
