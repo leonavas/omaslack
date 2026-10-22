@@ -857,17 +857,32 @@ Rectangle {
       MouseArea { x: box.t.sp(8); width: alsoText.x + alsoText.width + box.t.sp(16); height: parent.height; cursorShape: Qt.PointingHandCursor; onClicked: box.broadcast = !box.broadcast }
     }
 
-    // Bottom bar.
+    // Bottom bar. What doesn't fit beside the send button (a narrow
+    // conversation) goes under "…", the shortcuts first, then @, emoji, Aa.
     Item {
       width: parent.width
       height: box.t.sp(40)
       Row {
+        id: botRow
         x: box.t.sp(6)
         anchors.verticalCenter: parent.verticalCenter
         spacing: box.t.sp(4)
         visible: !box.editing
+        readonly property var order: box.note ? ["aa", "emoji", "at"] : ["plus", "aa", "emoji", "at", "shortcut"]
+        readonly property int fits: {
+          var btn = box.t.sp(28), sp = botRow.spacing
+          var room = parent.width - botRow.x - (sendPill.visible ? sendPill.width + box.t.sp(8) : 0) - box.t.sp(10)
+          function width(n) { var w = 0; for (var i = 0; i < n; i++) w += (i ? sp : 0) + btn + (order[i] === "shortcut" ? box.t.sp(8) + sp : 0); return w }
+          if (width(order.length) <= room) return order.length
+          var n = order.length - 1
+          while (n > 0 && width(n) + sp + btn > room) n--
+          return n
+        }
+        function keeps(k) { var i = order.indexOf(k); return i >= 0 && i < fits }
+        function runShortcut() { if (RD.isEmpty(box.doc)) box.change(RD.insertText(box.doc, 0, 0, "/", null).doc, 1); input.forceActiveFocus() }
+        function toggleFormatting() { box.showFormatting = !box.showFormatting; box.app.setSetting("composerToolbar", box.showFormatting) }
         Rectangle {
-          visible: !box.note
+          visible: botRow.keeps("plus")
           width: box.t.sp(28); height: width; radius: width / 2
           anchors.verticalCenter: parent.verticalCenter
           color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.1)
@@ -875,15 +890,35 @@ Rectangle {
           MouseArea { id: plusMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: box.pickFiles() }
           PanelToolTip { visible: plusMa.containsMouse; text: box.app.tr("Upload from your computer", "Enviar do seu computador") + "  Ctrl+U" }
         }
-        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; underlined: box.showFormatting
+        FmtButton { visible: botRow.keeps("aa"); app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; underlined: box.showFormatting
                     tip: box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação")
-                    onClicked: { box.showFormatting = !box.showFormatting; box.app.setSetting("composerToolbar", box.showFormatting) } }
-        FmtButton { id: emojiBtn; app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Emoji", "Emoji")
+                    onClicked: botRow.toggleFormatting() }
+        FmtButton { id: emojiBtn; visible: botRow.keeps("emoji"); app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Emoji", "Emoji")
                     onClicked: box.win.emojiPicker(emojiBtn, function(name) { box.insertEmoji(name); input.forceActiveFocus() }, {}) }
-        FmtButton { app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Mention someone", "Mencionar alguém"); onClicked: box.mention() }
-        Item { width: box.t.sp(8); height: 1 }
-        FmtButton { visible: !box.note; app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.alpha(box.t.fgDim, 0.7); tip: box.app.tr("Run a shortcut", "Executar um atalho")
-                    onClicked: { if (RD.isEmpty(box.doc)) box.change(RD.insertText(box.doc, 0, 0, "/", null).doc, 1); input.forceActiveFocus() } }
+        FmtButton { visible: botRow.keeps("at"); app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; tip: box.app.tr("Mention someone", "Mencionar alguém"); onClicked: box.mention() }
+        Item { visible: botRow.keeps("shortcut"); width: box.t.sp(8); height: 1 }
+        FmtButton { visible: botRow.keeps("shortcut"); app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.alpha(box.t.fgDim, 0.7); tip: box.app.tr("Run a shortcut", "Executar um atalho")
+                    onClicked: botRow.runShortcut() }
+        FmtButton {
+          id: botMore
+          visible: botRow.fits < botRow.order.length
+          app: box.app
+          icon: "󰇘"
+          iconSize: box.t.fsIcon + 3
+          tone: box.t.fgSoft
+          tip: box.app.tr("More", "Mais")
+          onClicked: {
+            var labels = {
+              plus: [box.app.tr("Upload from your computer", "Enviar do seu computador"), "Ctrl+U", function() { box.pickFiles() }],
+              aa: [box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação"), "", function() { botRow.toggleFormatting() }],
+              emoji: [box.app.tr("Emoji", "Emoji"), "", function() { box.win.emojiPicker(botMore, function(name) { box.insertEmoji(name); input.forceActiveFocus() }, {}) }],
+              at: [box.app.tr("Mention someone", "Mencionar alguém"), "", function() { box.mention() }],
+              shortcut: [box.app.tr("Run a shortcut", "Executar um atalho"), "", function() { botRow.runShortcut() }]
+            }
+            var out = botRow.order.slice(botRow.fits).map(function(k) { var l = labels[k]; return { label: l[0], hint: l[1], action: l[2] } })
+            box.win.menuAt(botMore, out, 0, -box.t.sp(8) - out.length * box.t.sp(32))
+          }
+        }
       }
 
       // Edit: Cancel / Save. Otherwise the send button.
