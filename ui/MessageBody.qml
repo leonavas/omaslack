@@ -170,8 +170,8 @@ Column {
         id: acc
         visible: !!parent.p.accessory && (parent.p.accessory.kind !== "image" || body.shows(parent.p.accessory.url))
         anchors.right: parent.right
-        width: item ? item.width : 0
-        height: item ? item.height : 0
+        // No width or height of its own: a sized Loader squeezes its
+        // item to that size (the button shrank to nothing).
         sourceComponent: !parent.p.accessory ? null : (parent.p.accessory.kind === "image" ? accImg : accBtn)
         Component {
           id: accImg
