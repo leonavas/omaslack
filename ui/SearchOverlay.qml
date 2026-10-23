@@ -187,17 +187,18 @@ Item {
                    user: "", self: false, deleted: false, n: 0, updated: d.updated || 0, purpose: d.purpose || "" })
     }
     // Deactivated accounts too, as Slack finds them: their DM (kept aside,
-    // Workspace.goneDms) opens as archives.
+    // Workspace.goneDms) opens as archives. Apps (bot users) as well, as
+    // Slack's "· App", unless removed.
     var people = []
     for (var uid in w.users) {
       var u = w.users[uid]
-      if (!u || u.bot || uid === "USLACKBOT") continue
+      if (!u || uid === "USLACKBOT" || (u.bot && u.deleted)) continue
       var ps = [s.prepOf("n" + uid, u.name || "")]
       if (u.real && u.real !== u.name) ps.push(s.prepOf("r" + uid, u.real))
       if (u.handle && u.handle !== u.name) ps.push(s.prepOf("h" + uid, u.handle))
       var gone = dmOf[uid] ? null : w.goneDms[uid]
       people.push({ id: uid, name: u.name || "", real: u.real || "", handle: u.handle || "", title: u.title || "",
-                    ps: ps, dm: dmOf[uid] || (gone ? gone.id : ""), updated: gone ? gone.updated || 0 : 0, self: uid === w.me.id, deleted: !!u.deleted })
+                    ps: ps, dm: dmOf[uid] || (gone ? gone.id : ""), updated: gone ? gone.updated || 0 : 0, self: uid === w.me.id, deleted: !!u.deleted, bot: !!u.bot })
     }
     s._convIdx = convs
     s._userIdx = people
@@ -276,6 +277,7 @@ Item {
       var ga = s.grade(a.tier), gb = s.grade(b.tier)
       if (ga !== gb) return ga - gb
       if (!!a.e.ckind !== !!b.e.ckind) return a.e.ckind ? 1 : -1
+      if (!!a.e.bot !== !!b.e.bot) return a.e.bot ? 1 : -1
       if (a.e.self !== b.e.self) return a.e.self ? 1 : -1
       if (a.latest !== b.latest) return b.latest - a.latest
       if (a.tier !== b.tier) return a.tier - b.tier
@@ -1186,7 +1188,7 @@ Item {
                     id: prReal
                     anchors.verticalCenter: prName.verticalCenter
                     width: Math.max(0, Math.min(implicitWidth, parent.width - prName.width - prEmoji.width - s.t.sp(12)))
-                    text: pr.e.real && pr.e.real !== pr.e.name ? pr.e.real : (pr.e.handle ? "@" + pr.e.handle : "")
+                    text: pr.e.bot ? s.app.tr("App", "App") : (pr.e.real && pr.e.real !== pr.e.name ? pr.e.real : (pr.e.handle ? "@" + pr.e.handle : ""))
                     textFormat: Text.PlainText
                     color: s.t.fgDim
                     font.family: s.t.font
