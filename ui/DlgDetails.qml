@@ -7,7 +7,7 @@ import "../lib/Mrkdwn.js" as Md
 
 // Slack's channel details: the name with the star and the notifications
 // pill, then About (name, topic, description, who made it, leave),
-// Members (search, add people, profiles) and Settings (private, archive,
+// Members (search, add people, profiles, channel managers, remove) and Settings (private, archive,
 // delete). Group DMs only have Members.
 DialogFrame {
   id: d
@@ -28,7 +28,9 @@ DialogFrame {
 
   property string tab: d.group ? "members" : (["about", "members", "settings"].indexOf(args.tab) >= 0 ? args.tab : "about")
   property var memberIds: []
+  property var managerIds: []
   property bool membersLoaded: false
+  property string menuFor: ""        // the member whose ⋮ menu is open
   property string editing: ""        // name | topic | purpose
   property string busy: ""           // the action waiting for Slack
   property string error: ""
@@ -69,6 +71,8 @@ DialogFrame {
       d.memberIds = list || []
       d.membersLoaded = true
     })
+    if (d.group) return
+    d.ws.managers(d.convId, function(list) { if (life.on) d.managerIds = list })
   }
 
   function setTab(name) {
@@ -227,7 +231,7 @@ DialogFrame {
   Connections {
     target: d.win
     ignoreUnknownSignals: true
-    function onMenusShownChanged() { if (d.win && !d.win.menusShown) Qt.callLater(d.focusTab) }
+    function onMenusShownChanged() { if (d.win && !d.win.menusShown) { d.menuFor = ""; Qt.callLater(d.focusTab) } }
   }
 
   // ------------------------------------------------------------ fast search
@@ -334,6 +338,62 @@ DialogFrame {
     d.closed()
     w.profileUser = r.id
     w.thread = null
+  }
+
+  // A member's ⋮: make or unmake channel manager (admins and managers),
+  // remove from the channel (not #general).
+  readonly property bool canManage: {
+    var w = d.ws
+    if (!w) return false
+    w.usersRev
+    var me = w.users[w.me.id]
+    return (!!me && !!me.admin) || d.managerIds.indexOf(w.me.id) >= 0
+  }
+  function memberItems(uid) {
+    if (d.group || d.archived || !d.member || !d.ws || uid === d.ws.me.id) return []
+    var items = []
+    if (d.canManage) {
+      var on = d.managerIds.indexOf(uid) >= 0
+      items.push({ label: on ? d.app.tr("Remove as Channel Manager", "Remover como gerente do canal") : d.app.tr("Make Channel Manager", "Tornar gerente do canal"),
+                   icon: on ? "󰀍" : "󰀋", action: function() { d.setManager(uid, !on) } })
+    }
+    if (!d.general) items.push({ label: d.app.tr("Remove from channel", "Remover do canal"), icon: "󰀕", danger: true,
+                                 action: function() { d.error = ""; d.confirm = "kick:" + uid } })
+    return items
+  }
+  function memberMenu(item, uid) {
+    var items = d.memberItems(uid)
+    if (!items.length) return
+    d.menuFor = uid
+    d.win.menuAt(item, items, item.width - d.t.sp(240), item.height + d.t.sp(4))
+  }
+
+  function setManager(uid, on) {
+    if (d.busy) return
+    var w = d.ws, life = d.life, win = d.win, app = d.app, name = w.userName(uid) || uid
+    d.busy = "manager"
+    w.setManager(d.convId, uid, on, function(err) {
+      if (!life.on) return
+      d.busy = ""
+      if (err) { win.toast(err); return }
+      d.managerIds = on ? d.managerIds.concat([uid]) : d.managerIds.filter(function(x) { return x !== uid })
+      win.toast(on ? name + app.tr(" is now a Channel Manager", " agora é gerente do canal") : name + app.tr(" is no longer a Channel Manager", " não é mais gerente do canal"))
+    })
+  }
+
+  function kick(uid) {
+    if (d.busy) return
+    var w = d.ws, life = d.life, win = d.win, app = d.app, name = w.userName(uid) || uid, chan = d.hashName
+    d.busy = "kick"
+    w.kick(d.convId, uid, function(err) {
+      if (!life.on) return
+      d.busy = ""
+      d.confirm = ""
+      if (err) { win.toast(err); return }
+      d.memberIds = d.memberIds.filter(function(x) { return x !== uid })
+      d.managerIds = d.managerIds.filter(function(x) { return x !== uid })
+      win.toast(name + app.tr(" was removed from ", " foi removido de ") + chan)
+    })
   }
 
   function copyNames() {
@@ -739,6 +799,10 @@ DialogFrame {
               readonly property bool isAdd: modelData.kind === "add"
               readonly property var u: !isAdd && d.ws ? d.ws.user(modelData.id) : null
               readonly property var status: !isAdd && d.ws ? d.ws.statusOf(modelData.id) : null
+              readonly property bool manager: !isAdd && d.managerIds.indexOf(modelData.id) >= 0
+              readonly property bool confirming: !isAdd && d.confirm === "kick:" + modelData.id
+              readonly property bool hasMenu: !isAdd && d.memberItems(modelData.id).length > 0
+              readonly property real actionsW: confirming ? kickRow.width + d.t.sp(12) : (hasMenu ? moreBtn.width + d.t.sp(12) : 0)
               width: memberList.width
               height: d.t.sp(52)
               radius: Math.max(6, d.t.radiusSmall)
@@ -769,7 +833,7 @@ DialogFrame {
 
               Column {
                 x: d.t.sp(56)
-                width: parent.width - x - d.t.sp(12)
+                width: parent.width - x - d.t.sp(12) - mrow.actionsW
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: d.t.sp(2)
                 Row {
@@ -803,14 +867,23 @@ DialogFrame {
                     font.pixelSize: d.t.fsText
                     anchors.verticalCenter: parent.verticalCenter
                   }
+                  Text {
+                    visible: mrow.manager
+                    text: d.app.tr("Channel Manager", "Gerente do canal")
+                    color: d.t.fgDim
+                    font.family: d.t.font
+                    font.pixelSize: d.t.fsSmall
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
                 }
                 Text {
                   visible: text !== ""
                   width: parent.width
                   elide: Text.ElideRight
-                  text: mrow.isAdd ? "" : (mrow.u ? (mrow.u.title || (mrow.u.real && mrow.u.real !== mrow.u.name ? mrow.u.real : "")) : "")
+                  text: mrow.confirming ? d.app.tr("Remove from ", "Remover de ") + d.hashName + "?"
+                      : mrow.isAdd ? "" : (mrow.u ? (mrow.u.title || (mrow.u.real && mrow.u.real !== mrow.u.name ? mrow.u.real : "")) : "")
                   textFormat: Text.PlainText
-                  color: d.t.fgDim
+                  color: mrow.confirming ? d.t.red : d.t.fgDim
                   font.family: d.t.font
                   font.pixelSize: d.t.fsSmall
                 }
@@ -821,7 +894,43 @@ DialogFrame {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: d.openMember(mrow.index)
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: mouse => {
+                  if (mrow.confirming) return
+                  if (mouse.button === Qt.RightButton) d.memberMenu(moreBtn, mrow.modelData.id)
+                  else d.openMember(mrow.index)
+                }
+              }
+
+              IconButton {
+                id: moreBtn
+                visible: mrow.hasMenu && !mrow.confirming && (mrowMa.containsMouse || hovered || d.menuFor === mrow.modelData.id)
+                anchors.right: parent.right
+                anchors.rightMargin: d.t.sp(10)
+                anchors.verticalCenter: parent.verticalCenter
+                app: d.app
+                icon: "󰇙"
+                active: d.menuFor === mrow.modelData.id
+                tip: d.app.tr("More actions", "Mais ações")
+                onClicked: d.memberMenu(moreBtn, mrow.modelData.id)
+              }
+
+              Row {
+                id: kickRow
+                visible: mrow.confirming
+                anchors.right: parent.right
+                anchors.rightMargin: d.t.sp(10)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: d.t.sp(8)
+                SButton { app: d.app; small: true; text: d.app.tr("Cancel", "Cancelar"); onClicked: d.confirm = "" }
+                SButton {
+                  app: d.app
+                  small: true
+                  kind: "danger"
+                  text: d.busy === "kick" ? d.app.tr("Removing…", "Removendo…") : d.app.tr("Remove", "Remover")
+                  enabled2: d.busy === ""
+                  onClicked: d.kick(mrow.modelData.id)
+                }
               }
             }
 

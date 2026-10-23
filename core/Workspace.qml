@@ -223,7 +223,7 @@ Item {
     "users.channelSections.list", "stars.list", "users.priority.list", "client.counts", "client.userBoot", "client.getWebSocketURL",
     "rtm.connect", "emoji.list", "commands.list", "users.prefs.get", "dnd.info", "dnd.teamInfo", "saved.list", "conversations.history",
     "conversations.replies", "conversations.info", "conversations.members", "conversations.list", "pins.list", "reactions.get",
-    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list"]
+    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list", "admin.roles.entity.listAssignments"]
 
   function api(method, params, ok, fail) {
     if (root.readOnlyMode && root.readMethods.indexOf(method) < 0) {
@@ -2634,6 +2634,26 @@ Item {
 
   function invite(conv, userIds, cb) {
     root.api("conversations.invite", { channel: conv, users: userIds.join(",") }, function() { if (cb) cb("") }, function(err) { if (cb) cb(root.errorText(err)) })
+  }
+
+  function kick(conv, user, cb) {
+    root.api("conversations.kick", { channel: conv, user: user }, function() { if (cb) cb("") }, function(err) { if (cb) cb(root.errorText(err)) })
+  }
+
+  // Channel managers: the role Rl0A on the channel, as Slack's own client
+  // lists, grants and takes it.
+  readonly property string managerRole: "Rl0A"
+  function managers(conv, cb) {
+    root.api("admin.roles.entity.listAssignments", { entity_id: conv }, function(b) {
+      var out = []
+      ;(b.role_assignments || []).forEach(function(a) { if (a.role_id === root.managerRole) out = out.concat(a.users || []) })
+      cb(out)
+    }, function() { cb([]) })
+  }
+  function setManager(conv, user, on, cb) {
+    root.api(on ? "admin.roles.addAssignments" : "admin.roles.removeAssignments",
+             { role_id: root.managerRole, entity_id: conv, entity_ids: conv, user_ids: user },
+             function() { if (cb) cb("") }, function(err) { if (cb) cb(root.errorText(err)) })
   }
 
   function setNotify(conv, level) {

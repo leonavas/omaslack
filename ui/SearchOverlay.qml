@@ -268,18 +268,16 @@ Item {
 
     // People and group DMs: a person ahead of a group that matches as well
     // (most often through that person's name), you behind others who do.
-    // A deactivated account ranks like anyone (their DM's last word, as
-    // Slack's affinity puts them first when you talked lately), behind
-    // the active on a tie, so those never talked to wait at the end.
+    // Deactivated accounts wait at the end, behind every active one.
     pout = pout.concat(gout)
     pout.sort(function(a, b) {
       if (!!a.e.archived !== !!b.e.archived) return a.e.archived ? 1 : -1
+      if (!!a.e.deleted !== !!b.e.deleted) return a.e.deleted ? 1 : -1
       var ga = s.grade(a.tier), gb = s.grade(b.tier)
       if (ga !== gb) return ga - gb
       if (!!a.e.ckind !== !!b.e.ckind) return a.e.ckind ? 1 : -1
       if (a.e.self !== b.e.self) return a.e.self ? 1 : -1
       if (a.latest !== b.latest) return b.latest - a.latest
-      if (!!a.e.deleted !== !!b.e.deleted) return a.e.deleted ? 1 : -1
       if (a.tier !== b.tier) return a.tier - b.tier
       var la = (a.e.label || a.e.name).length, lb = (b.e.label || b.e.name).length
       if (la !== lb) return la - lb
@@ -288,8 +286,9 @@ Item {
     s.peopleMatches = pout.map(function(m) { return m.e })
 
     // All: the section whose first answer is the better match goes first;
-    // People on a tie, unless what leads it is you. Archived counts as weak.
-    function lead(m) { return !m ? 9 : (m.e.archived ? 4 : s.grade(m.tier)) }
+    // People on a tie, unless what leads it is you. Archived or deactivated
+    // counts as weak.
+    function lead(m) { return !m ? 9 : (m.e.archived || m.e.deleted ? 4 : s.grade(m.tier)) }
     var cg = lead(out[0]), pg = lead(pout[0])
     s.peopleFirst = pg < cg || (pg === cg && !(pout.length && pout[0].e.self))
   }
