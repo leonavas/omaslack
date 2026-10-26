@@ -5,8 +5,9 @@ import qs.Ui
 import "../lib/Registry.js" as Reg
 
 // Context menus over the whole window: a stack of cards, submenus opening
-// beside their row. Items: {label, icon, hint, action(), danger, checked,
-// enabled, sub: [items]}, {separator: true}, {header: "…"} (a group's
+// beside their row. Items: {label, icon, hint, desc (a line under it),
+// action(), danger, checked, enabled, sub: [items] (the hint before its
+// arrow)}, {separator: true}, {header: "…"} (a group's
 // label), {title: "…"} (the menu's name, on top),
 // {reactions: ["white_check_mark", …], ws, action(name)} (`ws` draws the
 // workspace's custom ones). Closed, the keyboard
@@ -55,8 +56,8 @@ Item {
     for (var i = 0; i < items.length; i++) {
       var it = items[i]
       if (it.reactions) { w = Math.max(w, it.reactions.length * menuLayer.t.sp(38) + menuLayer.t.sp(20)); continue }
-      var label = labelMetrics.advanceWidth(it.label || it.header || it.title || "")
-      var hint = hintMetrics.advanceWidth(it.sub ? "›" : (it.hint || ""))
+      var label = Math.max(labelMetrics.advanceWidth(it.label || it.header || it.title || ""), hintMetrics.advanceWidth(it.desc || ""))
+      var hint = hintMetrics.advanceWidth((it.hint || "") + (it.sub ? "  ›" : ""))
       w = Math.max(w, label + hint + menuLayer.t.sp(it.header !== undefined || it.title !== undefined ? 40 : 80))
     }
     return Math.min(Math.round(w), menuLayer.t.sp(420))
@@ -178,7 +179,7 @@ Item {
                 readonly property var it: row.modelData
                 readonly property bool hot: ima.containsMouse || (menuLayer.hot === row.index && card.level === menuLayer.stack.length - 1)
                 readonly property bool on: it.enabled !== false
-                height: menuLayer.t.sp(30)
+                height: menuLayer.t.sp(it.desc ? 46 : 30)
                 radius: Math.max(4, menuLayer.t.radiusSmall)
                 color: hot && on ? (it.danger ? menuLayer.t.red : menuLayer.t.accent) : "transparent"
                 readonly property color ink: hot && on ? menuLayer.t.onColor(it.danger ? menuLayer.t.red : menuLayer.t.accent) : (it.danger ? menuLayer.t.red : menuLayer.t.fg)
@@ -197,24 +198,49 @@ Item {
                     size: menuLayer.t.fsIcon - 1
                     anchors.verticalCenter: parent.verticalCenter
                   }
-                  Text {
-                    text: parent.parent.it.label
-                    textFormat: Text.PlainText
-                    color: parent.parent.ink
-                    font.family: menuLayer.t.font
-                    font.pixelSize: menuLayer.t.fsText - 1
+                  Column {
                     anchors.verticalCenter: parent.verticalCenter
+                    spacing: menuLayer.t.sp(2)
+                    Text {
+                      text: parent.parent.parent.it.label
+                      textFormat: Text.PlainText
+                      color: parent.parent.parent.ink
+                      font.family: menuLayer.t.font
+                      font.pixelSize: menuLayer.t.fsText - 1
+                    }
+                    Text {
+                      visible: !!parent.parent.parent.it.desc
+                      text: parent.parent.parent.it.desc || ""
+                      textFormat: Text.PlainText
+                      color: parent.parent.parent.hot && parent.parent.parent.on ? parent.parent.parent.ink : menuLayer.t.fgDim
+                      font.family: menuLayer.t.font
+                      font.pixelSize: menuLayer.t.fsSmall
+                    }
                   }
                 }
-                Text {
+                Row {
                   anchors.right: parent.right
                   anchors.rightMargin: menuLayer.t.sp(10)
                   anchors.verticalCenter: parent.verticalCenter
-                  text: parent.it.sub ? "›" : (parent.it.hint || "")
-                  textFormat: Text.PlainText
-                  color: parent.hot && parent.on ? parent.ink : menuLayer.t.fgDim
-                  font.family: menuLayer.t.font
-                  font.pixelSize: parent.it.sub ? menuLayer.t.fsTitle : menuLayer.t.fsSmall
+                  spacing: menuLayer.t.sp(6)
+                  Text {
+                    visible: !!parent.parent.it.hint
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: parent.parent.it.hint || ""
+                    textFormat: Text.PlainText
+                    color: parent.parent.hot && parent.parent.on ? parent.parent.ink : menuLayer.t.fgDim
+                    font.family: menuLayer.t.font
+                    font.pixelSize: menuLayer.t.fsSmall
+                  }
+                  Text {
+                    visible: !!parent.parent.it.sub
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "›"
+                    textFormat: Text.PlainText
+                    color: parent.parent.hot && parent.parent.on ? parent.parent.ink : menuLayer.t.fgDim
+                    font.family: menuLayer.t.font
+                    font.pixelSize: menuLayer.t.fsTitle
+                  }
                 }
                 MouseArea {
                   id: ima

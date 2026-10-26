@@ -343,6 +343,19 @@ Rectangle {
       items.push({ label: side.app.tr("Move section down", "Mover seção para baixo"), icon: "󰁅", enabled: i >= 0 && i < w.sections.length - 1, action: function() { w.moveSection(row.id, 1) } })
     }
     items.push({ label: row.collapsed ? side.app.tr("Expand", "Expandir") : side.app.tr("Collapse", "Recolher"), icon: row.collapsed ? "󰅀" : "󰅂", action: function() { w.toggleCollapsed(row.id) } })
+    // "Section settings": Slack's Filter, a paid team's, for its own sections.
+    if (w.sidebarRules.paidTeam && w.sections.some(function(s) { return s.id === row.id }) && row.type !== "priority") {
+      var show = w.sectionFilter(row.id, row.type)
+      var names = { active: side.app.tr("Active only", "Somente ativas"), hid: side.app.tr("Unreads", "Não lidas"),
+                    mentions: side.app.tr("Mentions", "Menções"), all: side.app.tr("All", "Todas") }
+      var opts = ["active", "hid"].concat(row.type === "direct_messages" ? [] : ["mentions"], ["all"])
+      items.push({ separator: true })
+      items.push({ header: side.app.tr("Section settings", "Configurações da seção") })
+      items.push({ label: side.app.tr("Filter", "Filtro"), icon: "󰈲", hint: names[show], sub: opts.map(function(v) {
+        return { label: names[v], checked: show === v, desc: v === "active" ? side.app.tr("New activity within the last 30 days", "Nova atividade nos últimos 30 dias") : "",
+                 action: function() { w.setSectionFilter(row.id, v) } }
+      }) })
+    }
     if (own) {
       items.push({ separator: true })
       items.push({ label: side.app.tr("Delete section…", "Excluir seção…"), icon: "󰧧", danger: true, action: function() { side.win.dialog("confirm", {
