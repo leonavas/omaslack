@@ -92,19 +92,23 @@ Item {
       anchors.verticalCenterOffset: r.t.sp(2)
       spacing: r.t.sp(6)
       // Slack: the section's own icon (its emoji, the star of Starred) where
-      // the caret would be; the caret when it has none, and while the header
-      // is hovered, so it folds from there.
+      // the caret would be; the caret when it has none, and while anywhere
+      // on the header is hovered (secHover sees past the buttons), so it
+      // folds from there.
       Rectangle {
         id: secLead
         readonly property string icon: r.row.emoji && secEmoji.res ? "emoji" : (r.row.type === "stars" ? "star" : "")
-        readonly property bool caret: icon === "" || ma.containsMouse || leadMa.containsMouse
+        readonly property bool caret: icon === "" || secHover.hovered
         readonly property int iconSize: Math.min(width, Math.round(secLabel.implicitHeight))
         width: r.t.sp(20); height: width; radius: 4
         color: leadMa.containsMouse ? r.t.hoverStrong : "transparent"
         anchors.verticalCenter: parent.verticalCenter
         EmojiIcon {
           id: secEmoji
-          visible: secLead.icon === "emoji" && !secLead.caret
+          // Hidden by opacity: hiding it would stop its image, which then
+          // didn't always come back (after folding the section).
+          visible: secLead.icon === "emoji"
+          opacity: secLead.caret ? 0 : 1
           anchors.centerIn: parent
           app: r.app
           ws: r.ws

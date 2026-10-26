@@ -130,7 +130,7 @@ Item {
       lang: root.lang, me: root.me.id, convs: root.convs, users: root.users, handles: root.handles, counts: root.counts,
       sections: root.sections, stars: root.stars, openIms: root.openIms, prefs: root.prefsLoaded ? root.prefs : {},
       current: root.current, view: root.view, focused: root.focused, collapsed: root.collapsed, drafts: root.drafts,
-      draftCount: Object.keys(root.drafts).length, threads: root.threads, hideInactive: root.hideInactive, recents: root.recents,
+      draftCount: Object.keys(root.drafts).length, threads: root.threads, recents: root.recents,
       sidebarBehavior: rules.sidebarBehavior, sectionPrefs: rules.sectionPrefs, paidTeam: rules.paidTeam,
       canInvite: rules.canInvite, hideSlackbot: rules.hideSlackbot, invitePeople: rules.invitePeople
     })
@@ -2209,11 +2209,19 @@ Item {
   }
   // A file that would run rather than open (a script, a launcher, a
   // program, or one marked executable) shows in its folder instead.
+  // Markdown goes to Omarchy's default editor and HTML to its default
+  // browser; anything else (or no Omarchy launcher) to xdg-open.
   function openLocal(path) {
     var runs = /\.(desktop|sh|bash|zsh|fish|ksh|csh|command|run|bin|appimage|exe|msi|com|scr|bat|cmd|ps1|vbs|jar|jnlp)$/i.test(path)
     if (runs) root.say(root.tr("Showing it in its folder: this kind of file can run programs", "Mostrando na pasta: esse tipo de arquivo pode executar programas"))
-    Quickshell.execDetached(["sh", "-c", 'if [ "$2" = 1 ] || [ -x "$1" ]; then exec xdg-open "${1%/*}"; fi; exec xdg-open "$1"',
-                             "omaslack-open", path, runs ? "1" : "0"])
+    Quickshell.execDetached(["sh", "-c",
+      'if [ "$2" = 1 ] || [ -x "$1" ]; then exec xdg-open "${1%/*}"; fi\n' +
+      'case "$(printf %s "${1##*.}" | tr A-Z a-z)" in\n' +
+      '  md|markdown|mdown|mkd) command -v omarchy-launch-editor >/dev/null && exec omarchy-launch-editor "$1" ;;\n' +
+      '  html|htm|xhtml) command -v omarchy-launch-browser >/dev/null && exec omarchy-launch-browser "file://$1" ;;\n' +
+      'esac\n' +
+      'exec xdg-open "$1"',
+      "omaslack-open", path, runs ? "1" : "0"])
   }
 
   // ---------------------------------------------------------------- files
@@ -2803,6 +2811,48 @@ Item {
     root.collapsed[id] = !now
     root.collapsedRev++
     if (root.app) root.app.saveCollapsed(root.teamId, root.collapsed)
+  }
+
+  // A section's "Filter" ("active", "hid", "mentions", "all"): what it shows now.
+  function sectionFilter(id, type) {
+    var r = root.sidebarRules
+    return Model.sectionShow({ sidebarBehavior: r.sidebarBehavior, sectionPrefs: r.sectionPrefs, paidTeam: r.paidTeam }, id, type)
+  }
+
+  // Slack's setChannelSectionPrefByApi: the filter goes into the
+  // channel_sections pref; once a section's differs from what the global
+  // "Show" gives it, the sidebar turns "Custom, depending on the section",
+  // every section keeping what it showed. Local first, Slack's after.
+  function setSectionFilter(id, value) {
+    var r = root.sidebarRules
+    var st = { sidebarBehavior: r.sidebarBehavior, sectionPrefs: r.sectionPrefs, paidTeam: r.paidTeam }
+    var prefs = JSON.parse(JSON.stringify(r.sectionPrefs || {}))
+    prefs[id] = prefs[id] || {}
+    prefs[id].sidebar = value
+    var byId = {}
+    root.sections.forEach(function(s) { byId[s.id] = s })
+    var custom = "hide_read_channels_unless_starred"
+    var differs = Object.keys(prefs).some(function(k) {
+      return byId[k] && prefs[k].sidebar !== undefined && prefs[k].sidebar !== Model.sectionDefaultShow(st, byId[k].type)
+    })
+    var toCustom = differs && r.sidebarBehavior !== custom
+    if (toCustom) root.sections.forEach(function(s) {
+      prefs[s.id] = prefs[s.id] || {}
+      if (prefs[s.id].sidebar === undefined) prefs[s.id].sidebar = Model.sectionDefaultShow(st, s.type)
+    })
+    // Slack keeps only the known sections' non-empty entries.
+    var out = {}
+    for (var k in prefs) if (byId[k] && Object.keys(prefs[k]).length) out[k] = prefs[k]
+    var value2 = JSON.stringify(out)
+    var old = root.rawPrefs, oldInactive = root.hideInactive
+    var np = U.copy(old)
+    np.channel_sections = value2
+    if (toCustom) { np.sidebar_behavior = custom; root.hideInactive = false }
+    root.rawPrefs = np
+    var fail = function(err) { root.rawPrefs = old; root.hideInactive = oldInactive; root.say(root.errorText(err)) }
+    var write = function() { root.api("users.prefs.set", { name: "channel_sections", value: value2 }, function() {}, fail) }
+    if (toCustom) root.api("users.prefs.set", { name: "sidebar_behavior", value: custom }, write, fail)
+    else write()
   }
 
   // ---------------------------------------------------------------- account
