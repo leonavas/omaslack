@@ -147,7 +147,7 @@ Item {
       }
     }
     Row {
-      visible: !r.narrow && (ma.containsMouse || secHover.hovered)
+      visible: !r.narrow && secHover.hovered
       anchors.right: parent.right
       anchors.rightMargin: r.t.sp(11)
       anchors.verticalCenter: parent.verticalCenter
