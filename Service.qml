@@ -841,6 +841,7 @@ Item {
         root.loginRunning = false
         root.loginStatus = ""
         if (err) root.loginError = err
+        else root.shareCookie(res.team, r.cookie)
       })
     })
   }
@@ -850,6 +851,30 @@ Item {
   Component {
     id: probeComponent
     Transport { }
+  }
+
+  // Slack's `d` cookie is one per browser, every workspace's, and signing
+  // in again replaces it: the one the other workspaces were added with
+  // stops working. Each that takes the new one (auth.test with its token)
+  // gets it; one that doesn't (a session pasted from another browser)
+  // keeps its own.
+  function shareCookie(teamId, cookie) {
+    root.accounts.forEach(function(a) {
+      if (a.teamId === teamId || !a.token || a.cookie === cookie || a.token.indexOf("xoxc-") !== 0) return
+      var probe = probeComponent.createObject(root, { token: a.token, cookie: cookie })
+      probe.call("auth.test", {}, function(r) {
+        probe.destroy()
+        if (!r.ok || !r.body || !r.body.ok || r.body.team_id !== a.teamId) return
+        var e = U.copy(root.expired); delete e[a.teamId]; root.expired = e
+        root.accounts = root.accounts.map(function(b) {
+          if (b.teamId !== a.teamId) return b
+          var c = U.copy(b)
+          c.cookie = cookie
+          return c
+        })
+        root.saveAccounts()
+      })
+    })
   }
 
   // auth.test with these credentials; on success the workspace is added.

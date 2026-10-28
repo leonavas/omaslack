@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import "../lib/Util.js" as U
 import "../lib/Model.js" as Model
 import "../lib/Markup.js" as Markup
@@ -74,7 +75,7 @@ Item {
   property int savedRev: 0
   property var vips: ({})
   property var dnd: null              // {until, snooze} while paused
-  property bool away: false
+  property bool away: false          // set away by hand (manual_away)
   property var presence: ({})
   property bool presenceLive: false
   property int presenceRev: 0
@@ -777,8 +778,8 @@ Item {
 
   function loadAccount() {
     root.api("users.getPresence", {}, function(b) {
-      root.away = b.manual_away === true || b.presence !== "active"
-      root.presence[root.me.id] = !root.away
+      root.away = b.manual_away === true
+      root.presence[root.me.id] = b.presence === "active"
       root.presenceRev++
     }, function() {})
     root.loadDnd()
@@ -968,6 +969,23 @@ Item {
     if (key === root._presenceKey || !wire.socketOpen) return
     root._presenceKey = key
     wire.sendSocket({ type: "presence_sub", ids: ids })
+  }
+
+  // Slack's "auto" presence is active only while a client says someone is
+  // there: a tickle on the socket every few minutes the computer isn't
+  // idle, as Slack's desktop app does. Ten idle minutes and Slack lets us
+  // go away on its own.
+  IdleMonitor { id: idle; timeout: 600 }
+  Timer {
+    interval: 240000
+    running: root.live && !idle.isIdle && !root.away
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.tickle()
+  }
+  function tickle() {
+    if (!wire.socketOpen || root.readOnlyMode) return
+    wire.sendSocket({ id: Date.now() % 100000, type: "tickle" })
   }
 
   property int _typingSent: 0
@@ -2861,6 +2879,7 @@ Item {
     root.presence[root.me.id] = !on
     root.presenceRev++
     root.api("users.setPresence", { presence: on ? "away" : "auto" }, function() {
+      if (!on) root.tickle()
       root.say(on ? root.tr("You're set to away", "Você está ausente") : root.tr("You're set to active", "Você está ativo"))
     }, function(err) { root.away = !on; root.presenceRev++; root.say(root.errorText(err)) })
   }
