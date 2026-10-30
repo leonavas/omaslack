@@ -64,6 +64,8 @@ Item {
   Component.onCompleted: {
     if (!s.ws) { s.closed(); return }
     input.text = s.initialQuery
+    // Searching inside a conversation or someone's messages: messages only.
+    if (/^(in|from):/.test(s.initialQuery)) s.tab = "messages"
     input.cursorPosition = input.text.length
     s.ready = true
     s.refresh(true)
@@ -73,7 +75,7 @@ Item {
   }
   Component.onDestruction: s.life.alive = false
 
-  onInitialQueryChanged: if (s.ready) { input.text = s.initialQuery; input.cursorPosition = input.text.length; input.forceActiveFocus() }
+  onInitialQueryChanged: if (s.ready) { if (/^(in|from):/.test(s.initialQuery)) s.tab = "messages"; input.text = s.initialQuery; input.cursorPosition = input.text.length; input.forceActiveFocus() }
   onWsChanged: if (s.ready) s.close()
   onQueryChanged: if (s.ready) s.refresh(true)
   onTabChanged: if (s.ready) { s.rebuild(true); s.loadMoreIfNear() }
