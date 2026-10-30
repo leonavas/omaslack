@@ -12,6 +12,19 @@ Column {
   property var win
   property var ws
   property var parts: []
+  // The parts drawn: `parts` only when it says something else. A message
+  // is rendered anew on any change to the people, conversations or emoji,
+  // and a new list, the same, would build every part (and its text) again.
+  property var shown: []
+  property string _key: ""
+  function keep() {
+    var k = JSON.stringify(body.parts || [])
+    if (k === body._key) return
+    body._key = k
+    body.shown = body.parts || []
+  }
+  onPartsChanged: body.keep()
+  Component.onCompleted: body.keep()
   property string conv: ""
   property var msg: null
   readonly property var t: app.theme
@@ -49,7 +62,7 @@ Column {
   }
 
   Repeater {
-    model: body.parts
+    model: body.shown
     delegate: Loader {
       id: part
       required property var modelData

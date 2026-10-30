@@ -23,7 +23,7 @@ Rectangle {
   // time), a conversation's own box before its threads.
   readonly property var drafts: {
     if (!ws) return []
-    ws.draftsRev; ws.convsRev; ws.usersRev
+    ws.draftsRev; ws.draftTextRev; ws.convsRev; ws.usersRev
     var out = []
     for (var key in ws.drafts) {
       var text = ws.drafts[key]

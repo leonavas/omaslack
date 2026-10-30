@@ -41,7 +41,7 @@ Rectangle {
   readonly property string fullPhoto: isApp && appInfo && appInfo.photo ? appInfo.photo : (u ? (u.photo || u.avatar512 || u.avatar192 || u.avatar || "") : "")
   readonly property bool gone: !!u && !!u.deleted
   readonly property var status: ws && uid ? ws.statusOf(uid) : null
-  readonly property bool vip: { if (!ws) return false; ws.usersRev; return !!ws.vips[uid] }
+  readonly property bool vip: { if (!ws) return false; ws.vipsRev; return !!ws.vips[uid] }
   property bool loading: false
   property real now: Date.now()
   color: t.pane

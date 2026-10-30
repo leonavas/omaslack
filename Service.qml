@@ -419,6 +419,26 @@ Item {
     var s = ipc ? ipc["specialWorkspace"] : null
     return !!s && String(s.name || "") === "special:" + root.specialName
   }
+  // The window where you can see it: open, and on a workspace a monitor is
+  // showing (the scratchpad shown, when parked). GIFs and busy rings only
+  // move then: each of their frames is a redraw, seen or not. Not reported
+  // by Hyprland (yet): seen.
+  readonly property bool onScreen: {
+    if (!root.windowOpen) return false
+    var t = root.toplevel
+    if (!t) return true
+    var ws = root.workspaceOf(t)
+    if (ws.indexOf("special:") === 0) {
+      var ms = Hyprland.monitors ? (Hyprland.monitors.values || []) : []
+      for (var i = 0; i < ms.length; i++) {
+        var ipc = ms[i].lastIpcObject
+        var s = ipc ? ipc["specialWorkspace"] : null
+        if (s && String(s.name || "") === ws) return true
+      }
+      return false
+    }
+    return !t.workspace || t.workspace.active
+  }
   // On while a background launch puts the window away: when the launch rule
   // missed, Hyprland focuses it for a moment on the way, which must not
   // count as reading it.

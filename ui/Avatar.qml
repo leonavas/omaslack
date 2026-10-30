@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell.Widgets
 import "../lib/Util.js" as U
 import "../lib/Registry.js" as Reg
@@ -27,6 +28,8 @@ Item {
   signal clicked()
 
   readonly property var u: ws && user ? ws.user(user) : null
+  // A deactivated account: the photo and its color in gray, as Slack does.
+  readonly property bool gone: !!(a.u && a.u.deleted)
   // "Slack" (its system notices): the logo on its own, as Slack draws it,
   // not the square photo its user has.
   readonly property bool slack: user === "USLACK"
@@ -77,7 +80,7 @@ Item {
     radius: Math.round(a.size * a.round)
     // Their color, under the photo too (an app's icon may be see-through);
     // none in the moment before.
-    color: a.slack ? "transparent" : a.shown || a.initialsUp ? Qt.hsla(U.hue(a.user || a.label), 0.45, a.t.dark ? 0.38 : 0.62, 1) : "transparent"
+    color: a.slack ? "transparent" : a.shown || a.initialsUp ? Qt.hsla(U.hue(a.user || a.label), a.gone ? 0 : 0.45, a.t.dark ? 0.38 : 0.62, 1) : "transparent"
 
     Text {
       anchors.centerIn: parent
@@ -93,6 +96,9 @@ Item {
       id: face
       anchors.fill: parent
       opacity: a.shown ? 1 : 0
+      // No shaders on the software renderer: the photo stays in color there.
+      layer.enabled: a.gone && GraphicsInfo.api !== GraphicsInfo.Software
+      layer.effect: MultiEffect { saturation: -1 }
       Behavior on opacity {
         enabled: a.late
         NumberAnimation { duration: 120 }
@@ -131,19 +137,22 @@ Item {
     }
   }
 
-  PresenceDot {
-    visible: a.showPresence && !a.slack && a.u && !a.u.bot
-    app: a.app
+  // Only made when shown: three shapes, in every avatar otherwise.
+  Loader {
+    active: a.showPresence && !a.slack && !!a.u && !a.u.bot
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     anchors.rightMargin: -2
     anchors.bottomMargin: -2
-    size: Math.max(8, Math.round(a.size * 0.3))
-    ring: a.ring
-    ink: a.presenceInk
-    // A deactivated account: always Slack's hollow ring.
-    active: a.ws && !(a.u && a.u.deleted) ? a.ws.isActive(a.user) : false
-    paused: a.ws && !(a.u && a.u.deleted) ? a.ws.isPaused(a.user) : false
+    sourceComponent: PresenceDot {
+      app: a.app
+      size: Math.max(8, Math.round(a.size * 0.3))
+      ring: a.ring
+      ink: a.presenceInk
+      // A deactivated account: always Slack's hollow ring.
+      active: a.ws && !(a.u && a.u.deleted) ? a.ws.isActive(a.user) : false
+      paused: a.ws && !(a.u && a.u.deleted) ? a.ws.isPaused(a.user) : false
+    }
   }
 
   MouseArea {

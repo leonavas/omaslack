@@ -261,7 +261,7 @@ Item {
       source: v.fullSrc
       fillMode: Image.Stretch
       smooth: true
-      playing: true
+      playing: v.app.onScreen
     }
   }
 
@@ -286,7 +286,7 @@ Item {
         icon: v.fullError ? "󰋮" : "󰝲"
         color: v.fullError ? v.t.red : v.ink
         size: v.t.fsIcon
-        RotationAnimator on rotation { running: spin.visible && !v.fullError && parent.parent.visible; from: 0; to: 360; duration: 900; loops: Animation.Infinite }
+        RotationAnimator on rotation { running: spin.visible && !v.fullError && parent.parent.visible && v.app.onScreen; from: 0; to: 360; duration: 900; loops: Animation.Infinite }
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter

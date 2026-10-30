@@ -78,7 +78,7 @@ Item {
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     reuseItems: false
-    cacheBuffer: 1200
+    cacheBuffer: 400
     topMargin: root.t.sp(8)
     model: ScriptModel { values: root.rows; objectProp: "key" }
     ScrollBar.vertical: ThinScroll { app: root.app }

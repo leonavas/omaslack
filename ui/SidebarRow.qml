@@ -19,7 +19,12 @@ Item {
   readonly property bool isSection: row.kind === "section"
   readonly property bool hot: ma.containsMouse
   readonly property bool selected: (row.kind === "conv" || row.kind === "nav") && row.active
-  readonly property color ink: selected ? t.rowSelectedText : ((row.unread || (row.kind === "nav" && row.unread)) ? t.unreadText : (row.muted ? t.alpha(t.fg, 0.45) : t.readText))
+  // The open conversation reads as read while the window has the focus
+  // (here, not in Model.sidebar: a focus change doesn't rebuild the list).
+  readonly property bool reading: isConv && !!row.active && !!ws && ws.focused
+  readonly property bool unread: !reading && !!row.unread
+  readonly property int mentions: reading ? 0 : (row.mentions || 0)
+  readonly property color ink: selected ? t.rowSelectedText : ((unread || (row.kind === "nav" && unread)) ? t.unreadText : (row.muted ? t.alpha(t.fg, 0.45) : t.readText))
   readonly property var typingNames: isConv && ws ? ws.typingIn(row.id) : []
   // A DM's person: their status emoji goes right after the name.
   readonly property bool isIm: isConv && row.convKind === "im"
@@ -30,7 +35,7 @@ Item {
   // dot's ring is that color, so the dot reads on every state.
   readonly property color fill: selected ? t.rowSelected
        : (ma.pressed ? t.hoverStrong : (hot ? t.hover
-       : (isConv && row.unread && app.unreadBackground ? t.alpha(t.blue, 0.10) : "transparent")))
+       : (isConv && unread && app.unreadBackground ? t.alpha(t.blue, 0.10) : "transparent")))
   readonly property color under: Qt.tint(dropHere ? Qt.tint(t.sidebar, t.alpha(t.accent, 0.12)) : t.sidebar, fill)
 
   // Slack's spacer above a section header (all but the first): room on
@@ -40,7 +45,7 @@ Item {
 
   // The unread bar at the left edge (Preferences → Sidebar).
   Rectangle {
-    visible: r.isConv && r.row.unread && !r.selected && r.app.unreadBar && !r.narrow
+    visible: r.isConv && r.unread && !r.selected && r.app.unreadBar && !r.narrow
     x: 0
     width: r.t.sp(3)
     height: parent.height - r.t.sp(10)
@@ -137,7 +142,7 @@ Item {
         id: secLabel
         text: r.row.label || ""
         textFormat: Text.PlainText
-        color: r.row.unread ? r.t.unreadText : r.t.readText
+        color: r.unread ? r.t.unreadText : r.t.readText
         font.family: r.t.font
         font.pixelSize: r.t.fsSidebar - 1
         font.bold: true
@@ -187,7 +192,7 @@ Item {
       size: r.row.convKind === "channel" && !r.row.ext ? r.t.fsSidebar + 2 : r.t.fsSidebar
       font.bold: r.row.convKind === "channel"
       color: r.ink
-      opacity: r.selected || r.row.unread ? 1 : 0.85
+      opacity: r.selected || r.unread ? 1 : 0.85
     }
     // DM: the photo, with presence.
     PresenceDot {
@@ -265,7 +270,7 @@ Item {
         color: r.ink
         font.family: r.t.font
         font.pixelSize: r.t.fsSidebar
-        font.bold: (r.row.unread || r.selected) && r.row.kind !== "add"
+        font.bold: (r.unread || r.selected) && r.row.kind !== "add"
         elide: Text.ElideRight
       }
       Text {
@@ -309,7 +314,7 @@ Item {
       color: r.ink
     }
     Glyph {
-      visible: r.isConv && r.row.muted && !(r.row.mentions > 0)
+      visible: r.isConv && r.row.muted && !(r.mentions > 0)
       app: r.app
       icon: "󰂛"
       size: r.t.fsSmall
@@ -318,8 +323,8 @@ Item {
     }
     Badge {
       app: r.app
-      visible: (r.isConv || r.row.kind === "nav") && r.row.mentions > 0
-      count: r.row.mentions || 0
+      visible: (r.isConv || r.row.kind === "nav") && r.mentions > 0
+      count: r.mentions
     }
     Badge {
       app: r.app
@@ -333,15 +338,15 @@ Item {
   // Narrow: a dot or a badge over the icon.
   Badge {
     app: r.app
-    visible: r.narrow && !r.isSection && (r.row.mentions || 0) > 0
-    count: r.row.mentions || 0
+    visible: r.narrow && !r.isSection && r.mentions > 0
+    count: r.mentions
     anchors.right: lead.right
     anchors.top: lead.top
     anchors.rightMargin: -r.t.sp(8)
     anchors.topMargin: -r.t.sp(6)
   }
   Rectangle {
-    visible: r.narrow && r.isConv && r.row.unread && !(r.row.mentions > 0)
+    visible: r.narrow && r.isConv && r.unread && !(r.mentions > 0)
     width: r.t.sp(8); height: width; radius: width / 2
     color: r.t.fgBright
     anchors.right: lead.right

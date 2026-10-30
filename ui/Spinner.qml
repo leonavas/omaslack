@@ -33,6 +33,6 @@ Item {
       capStyle: ShapePath.RoundCap
       PathAngleArc { centerX: s.size / 2; centerY: s.size / 2; radiusX: (s.size - s.stroke) / 2; radiusY: radiusX; startAngle: -90; sweepAngle: 100 }
     }
-    RotationAnimator on rotation { running: s.visible; from: 0; to: 360; duration: 800; loops: Animation.Infinite }
+    RotationAnimator on rotation { running: s.visible && s.opacity > 0 && s.app.onScreen; from: 0; to: 360; duration: 800; loops: Animation.Infinite }
   }
 }
