@@ -10,7 +10,7 @@ Row {
   property int dot: t.sp(4)
   spacing: Math.max(2, dot * 0.6)
   property int step: 0
-  Timer { interval: 220; running: d.visible; repeat: true; onTriggered: d.step = (d.step + 1) % 4 }
+  Timer { interval: 220; running: d.visible && d.app.onScreen; repeat: true; onTriggered: d.step = (d.step + 1) % 4 }
   Repeater {
     model: 3
     delegate: Rectangle {

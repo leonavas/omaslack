@@ -74,6 +74,7 @@ Item {
   property var saved: ({})
   property int savedRev: 0
   property var vips: ({})
+  property int vipsRev: 0
   property var dnd: null              // {until, snooze} while paused
   property bool away: false          // set away by hand (manual_away)
   property var presence: ({})
@@ -88,7 +89,8 @@ Item {
   property var collapsed: ({})
   property int collapsedRev: 0
   property var drafts: ({})
-  property int draftsRev: 0
+  property int draftsRev: 0            // a draft came or went (the sidebar's mark)
+  property int draftTextRev: 0        // ... or only its text changed
   property var sentLog: []            // [{conv, ts, text}] for Drafts & sent
 
   // messages
@@ -130,7 +132,7 @@ Item {
     return Model.sidebar({
       lang: root.lang, me: root.me.id, convs: root.convs, users: root.users, handles: root.handles, counts: root.counts,
       sections: root.sections, stars: root.stars, openIms: root.openIms, prefs: root.prefsLoaded ? root.prefs : {},
-      current: root.current, view: root.view, focused: root.focused, collapsed: root.collapsed, drafts: root.drafts,
+      current: root.current, view: root.view, collapsed: root.collapsed, drafts: root.drafts,
       draftCount: Object.keys(root.drafts).length, threads: root.threads, recents: root.recents,
       sidebarBehavior: rules.sidebarBehavior, sectionPrefs: rules.sectionPrefs, paidTeam: rules.paidTeam,
       canInvite: rules.canInvite, hideSlackbot: rules.hideSlackbot, invitePeople: rules.invitePeople
@@ -207,7 +209,7 @@ Item {
     var h = root.histories[conv]
     if (h && h.msgs.length && !h.detached && !root.fromCache[conv]) {
       var m = h.msgs[h.msgs.length - 1]
-      if (root.lastMsgs[conv] !== m) { root.lastMsgs[conv] = m; root.lastRev++ }
+      if (root.lastMsgs[conv] !== m) { root.lastMsgs[conv] = m; root.bump("lastRev") }
     }
   }
   function fetchLast(conv) {
@@ -215,7 +217,7 @@ Item {
     root._asked["last" + conv] = true
     root.api("conversations.history", { channel: conv, limit: 1 }, function(b) {
       var m = (b.messages || [])[0]
-      if (m) { root.lastMsgs[conv] = Model.parseMessage(m); root.lastRev++ }
+      if (m) { root.lastMsgs[conv] = Model.parseMessage(m); root.bump("lastRev") }
       delete root._asked["last" + conv]
     }, function() { delete root._asked["last" + conv] })
   }
@@ -324,6 +326,25 @@ Item {
     return map[code] || code.replace(/_/g, " ")
   }
 
+  // ---------------------------------------------------------------- revisions
+  // A counter bumped here moves once per event-loop turn however many
+  // changes the turn made: each move re-runs every binding that reads it
+  // (the sidebar, the bar, every avatar, every message).
+  property var _dirtyRevs: ({})
+  property bool _revsQueued: false
+  function bump(name) {
+    root._dirtyRevs[name] = true
+    if (root._revsQueued) return
+    root._revsQueued = true
+    Qt.callLater(root.flushRevs)
+  }
+  function flushRevs() {
+    var dirty = root._dirtyRevs
+    root._dirtyRevs = {}
+    root._revsQueued = false
+    for (var name in dirty) root[name]++
+  }
+
   // ---------------------------------------------------------------- getters
   function user(id) { root.usersRev; return root.users[id] || null }
   function userName(id) {
@@ -377,7 +398,7 @@ Item {
     for (var uid in t) if (t[uid] > now && uid !== root.me.id) names.push(root.userName(uid) || "?")
     return names
   }
-  function draft(conv) { root.draftsRev; return root.drafts[conv] || "" }
+  function draft(conv) { root.draftsRev; root.draftTextRev; return root.drafts[conv] || "" }
   function localFile(url) { root.filesRev; return root.localFiles[url] || "" }
 
   // The renderer's view of this workspace (lib/Mrkdwn.js).
@@ -408,7 +429,7 @@ Item {
     root._asked[kind + id] = true
     Qt.callLater(function() {
       if (kind === "user") {
-        root.api("users.info", { user: id }, function(b) { root.applyUser(b.user); root.usersRev++ }, function() {})
+        root.api("users.info", { user: id }, function(b) { root.applyUser(b.user); root.bump("usersRev") }, function() {})
       } else {
         root.api("conversations.info", { channel: id }, function(b) {
           var c = Model.parseConv(b.channel, null)
@@ -419,7 +440,7 @@ Item {
           }
           if (root.convs[c.id]) root.convs[c.id] = Model.parseConv(b.channel, root.convs[c.id])
           else root._others[c.id] = c
-          root.convsRev++
+          root.bump("convsRev")
         }, function() {})
       }
     })
@@ -544,19 +565,21 @@ Item {
   Timer { id: retryStart; interval: 15000; onTriggered: root.start() }
 
   function loadUsers() {
-    var fresh = {}
+    // Page by page only the first time (nobody known yet); else once, at the end.
+    var first = Object.keys(root.users).length === 0
     root.paginate("users.list", { limit: 200 }, "members", function() {
       root.usersRev++
       root.booted = root.booted || Object.keys(root.convs).length > 0
       cacheTimer.restart()
     }, function() {}, function(items) {
       for (var i = 0; i < items.length; i++) root.applyUser(items[i])
-      root.usersRev++
+      if (first) root.bump("usersRev")
     })
   }
 
   function loadConversations(after) {
     var seen = {}, gone = {}
+    var first = Object.keys(root.convs).length === 0
     root.paginate("users.conversations", { types: "public_channel,private_channel,mpim,im", exclude_archived: false, limit: 200 }, "channels", function() {
       for (var id in root.convs) {
         var c = root.convs[id]
@@ -581,7 +604,7 @@ Item {
         seen[c.id] = true
         root.convs[c.id] = o
       }
-      root.convsRev++
+      if (first) root.bump("convsRev")
     })
   }
 
@@ -648,12 +671,29 @@ Item {
       var cur = root.current
       if (cur && root.focused && root.view === "conv" && out[cur]) { out[cur].unread = false; out[cur].mentions = 0 }
       var prevThreads = root.threads
-      root.counts = out
-      root.activityCounts = b.activity_v2 || {}
-      root.threads = { unread: b.threads ? b.threads.has_unreads === true : false, mentions: b.threads ? (b.threads.mention_count || 0) : 0 }
-      root.countsRev++
-      if (prevThreads.unread !== root.threads.unread || prevThreads.mentions !== root.threads.mentions) threadsSoon.restart()
+      var threads = { unread: b.threads ? b.threads.has_unreads === true : false, mentions: b.threads ? (b.threads.mention_count || 0) : 0 }
+      var activity = b.activity_v2 || {}
+      var threadsMoved = prevThreads.unread !== threads.unread || prevThreads.mentions !== threads.mentions
+      var activityMoved = JSON.stringify(activity) !== JSON.stringify(root.activityCounts)
+      var countsMoved = !root.sameCounts(out, root.counts)
+      // Nothing new (most polls): the bindings stay; what follows the counts still looks.
+      if (!countsMoved && !threadsMoved && !activityMoved) { root.pruneReactions(); root.noticeQuietNews(); return }
+      if (countsMoved) root.counts = out
+      if (activityMoved) root.activityCounts = activity
+      if (threadsMoved) root.threads = threads
+      root.bump("countsRev")
+      if (threadsMoved) threadsSoon.restart()
     }, function() {})
+  }
+
+  function sameCounts(a, b) {
+    var ka = Object.keys(a), kb = Object.keys(b)
+    if (ka.length !== kb.length) return false
+    for (var i = 0; i < ka.length; i++) {
+      var x = a[ka[i]], y = b[ka[i]]
+      if (!y || x.latest !== y.latest || x.lastRead !== y.lastRead || x.unread !== y.unread || x.mentions !== y.mentions) return false
+    }
+    return true
   }
 
   // Unread Activity entries by type (client.counts' activity_v2): what
@@ -675,7 +715,7 @@ Item {
         o.member = true
         root.convs[id] = o
         if (root.openIms) root.openIms[id] = true
-        root.convsRev++
+        root.bump("convsRev")
       }
     }, function() {})
   }
@@ -795,8 +835,7 @@ Item {
   function loadAccount() {
     root.api("users.getPresence", {}, function(b) {
       root.away = b.manual_away === true
-      root.presence[root.me.id] = b.presence === "active"
-      root.presenceRev++
+      root.setPresence(root.me.id, b.presence === "active")
     }, function() {})
     root.loadDnd()
   }
@@ -804,11 +843,43 @@ Item {
   function loadDnd() {
     root.api("dnd.info", {}, function(b) {
       var now = Date.now() / 1000
-      if (b.snooze_enabled) root.dnd = { until: b.snooze_endtime || 0, snooze: true }
-      else if (b.dnd_enabled && b.next_dnd_start_ts <= now && now < b.next_dnd_end_ts) root.dnd = { until: b.next_dnd_end_ts, snooze: false }
-      else root.dnd = null
-      root.presenceRev++
+      var d = null
+      if (b.snooze_enabled) d = { until: b.snooze_endtime || 0, snooze: true }
+      else if (b.dnd_enabled && b.next_dnd_start_ts <= now && now < b.next_dnd_end_ts) d = { until: b.next_dnd_end_ts, snooze: false }
+      var o = root.dnd
+      if (d === null ? o === null : (o !== null && o.until === d.until && o.snooze === d.snooze)) return
+      root.dnd = d
+      root.bump("presenceRev")
     }, function() {})
+  }
+
+  // Someone's presence and pause as Slack tells them: the rev moves only
+  // on a change.
+  function setPresence(uid, on) {
+    if (root.presence[uid] === on) return
+    root.presence[uid] = on
+    root.bump("presenceRev")
+  }
+  // dnd.info / dnd.teamInfo / dnd_updated_user's status → {start, end}.
+  function dndWindow(d) {
+    return d.snooze_enabled ? { start: 0, end: d.snooze_endtime || 0 } : (d.dnd_enabled ? { start: d.next_dnd_start_ts || 0, end: d.next_dnd_end_ts || 0 } : { start: 0, end: 0 })
+  }
+  function setOthersDnd(uid, w) {
+    var o = root.othersDnd[uid]
+    if (o && o.start === w.start && o.end === w.end) return
+    root.othersDnd[uid] = w
+    root.bump("presenceRev")
+  }
+  // A pause that began or ended since the last look shows (isPaused reads
+  // the clock).
+  property real _dndSweep: Date.now() / 1000
+  function sweepDnd() {
+    var since = root._dndSweep, now = Date.now() / 1000
+    root._dndSweep = now
+    for (var id in root.othersDnd) {
+      var w = root.othersDnd[id]
+      if ((w.start > since && w.start <= now) || (w.end > since && w.end <= now)) { root.bump("presenceRev"); return }
+    }
   }
 
   function loadEmoji() {
@@ -824,9 +895,10 @@ Item {
         }
         if (typeof v === "string" && v.indexOf("http") === 0) custom[name] = v
       }
+      if (JSON.stringify(custom) === JSON.stringify(root.customEmoji) && JSON.stringify(aliases) === JSON.stringify(root.emojiAliases)) return
       root.customEmoji = custom
       root.emojiAliases = aliases
-      root.emojiRev++
+      root.bump("emojiRev")
       cacheTimer.restart()
     }, function() {})
   }
@@ -871,7 +943,7 @@ Item {
       var groups = b.users || {}
       for (var g in groups) (groups[g] || []).forEach(function(id) { out[id] = true })
       root.vips = out
-      root.usersRev++
+      root.vipsRev++
     }, function() {})
   }
 
@@ -1028,18 +1100,18 @@ Item {
     case "reaction_added": case "reaction_removed": root.onReactionEvent(e); break
     case "presence_change": {
       var list = e.users || (e.user ? [e.user] : [])
-      list.forEach(function(uid) { root.presence[uid] = e.presence === "active" })
+      list.forEach(function(uid) { root.setPresence(uid, e.presence === "active") })
       root.presenceLive = true
-      root.presenceRev++
       break
     }
     case "manual_presence_change": root.loadAccount(); break
     case "user_typing": {
       if (e.thread_ts || e.user === root.me.id) break
       var t = root.typing[e.channel] || {}
+      var already = t[e.user] > Date.now()
       t[e.user] = Date.now() + 6000
       root.typing[e.channel] = t
-      root.typingRev++
+      if (!already) root.bump("typingRev")
       if (!typingSweep.running) typingSweep.start()
       break
     }
@@ -1051,7 +1123,7 @@ Item {
         k.unread = unread
         if (typeof e.mention_count_display === "number") k.mentions = e.mention_count_display
         else if (!unread) k.mentions = 0
-        root.countsRev++
+        root.bump("countsRev")
       }
       countsSoon.restart()
       break
@@ -1061,9 +1133,7 @@ Item {
       countsSoon.restart(); threadsSoon.restart(); break
     case "dnd_updated": root.loadDnd(); break
     case "dnd_updated_user": {
-      var d = e.dnd_status || {}
-      root.othersDnd[e.user] = d.snooze_enabled ? { start: 0, end: d.snooze_endtime || 0 } : (d.dnd_enabled ? { start: d.next_dnd_start_ts || 0, end: d.next_dnd_end_ts || 0 } : { start: 0, end: 0 })
-      root.presenceRev++
+      root.setOthersDnd(e.user, root.dndWindow(e.dnd_status || {}))
       break
     }
     case "pref_change":
@@ -1103,20 +1173,20 @@ Item {
       if (root.openIms) { delete root.openIms[e.channel]; root.sectionsRev++ }
       break
     case "channel_left": case "group_left":
-      if (root.convs[e.channel]) { root.convs[e.channel].member = false; root.convsRev++ }
+      if (root.convs[e.channel]) { root.convs[e.channel].member = false; root.bump("convsRev") }
       break
     case "channel_rename": case "group_rename":
-      if (e.channel && root.convs[e.channel.id]) { root.convs[e.channel.id] = Model.parseConv(e.channel, root.convs[e.channel.id]); root.convsRev++ }
+      if (e.channel && root.convs[e.channel.id]) { root.convs[e.channel.id] = Model.parseConv(e.channel, root.convs[e.channel.id]); root.bump("convsRev") }
       break
     case "channel_archive": case "group_archive":
-      if (root.convs[e.channel]) { root.convs[e.channel] = Model.patch(root.convs[e.channel], { archived: true }); root.convsRev++ }
+      if (root.convs[e.channel]) { root.convs[e.channel] = Model.patch(root.convs[e.channel], { archived: true }); root.bump("convsRev") }
       break
     case "channel_unarchive": case "group_unarchive":
-      if (root.convs[e.channel]) { root.convs[e.channel] = Model.patch(root.convs[e.channel], { archived: false }); root.convsRev++ }
+      if (root.convs[e.channel]) { root.convs[e.channel] = Model.patch(root.convs[e.channel], { archived: false }); root.bump("convsRev") }
       break
     case "channel_deleted": case "group_deleted": root.forget(e.channel); break
     case "user_change": case "user_status_changed": case "user_profile_changed": case "team_join":
-      if (e.user && typeof e.user === "object") { root.applyUser(e.user); root.usersRev++ }
+      if (e.user && typeof e.user === "object") { root.applyUser(e.user); root.bump("usersRev") }
       break
     case "user_invalidated":
       if (e.user && e.user.id) { root._asked["user" + e.user.id] = false; delete root._asked["user" + e.user.id]; root.lookup("user", e.user.id) }
@@ -1143,13 +1213,13 @@ Item {
     interval: 1000
     repeat: true
     onTriggered: {
-      var now = Date.now(), left = false
+      var now = Date.now(), left = false, gone = false
       for (var c in root.typing) {
         var t = root.typing[c]
-        for (var u in t) { if (t[u] <= now) delete t[u]; else left = true }
+        for (var u in t) { if (t[u] <= now) { delete t[u]; gone = true } else left = true }
         if (Object.keys(t).length === 0) delete root.typing[c]
       }
-      root.typingRev++
+      if (gone) root.bump("typingRev")
       if (!left) stop()
     }
   }
@@ -1189,7 +1259,7 @@ Item {
     if (e.is_ephemeral) { m.ephemeral = true; if (!m.ts) m.ts = U.nowTs() }
     if (!m.ts) return
     // Who stopped typing: their message arrived.
-    if (m.user && root.typing[chan] && root.typing[chan][m.user]) { delete root.typing[chan][m.user]; root.typingRev++ }
+    if (m.user && root.typing[chan] && root.typing[chan][m.user]) { delete root.typing[chan][m.user]; root.bump("typingRev") }
     var isReply = m.threadTs && m.threadTs !== m.ts
     var key = chan + "/" + (m.threadTs || m.ts)
     if (isReply) {
@@ -1209,7 +1279,7 @@ Item {
       threadsSoon.restart()
     }
     if (!isReply || m.subtype === "thread_broadcast") {
-      if (!m.ephemeral) { root.lastMsgs[chan] = m; root.lastRev++ }
+      if (!m.ephemeral) { root.lastMsgs[chan] = m; root.bump("lastRev") }
       var h = root.histories[chan]
       if (h && !h.detached) {
         var msgs = h.msgs.filter(function(x) { return !(x.pending && x.user === m.user && x.text === m.text) })
@@ -1227,7 +1297,7 @@ Item {
         if (Model.isDm(c) || Md.mentions(m, root.me.id)) k.mentions = (k.mentions || 0) + 1
       }
       root.counts[chan] = k
-      root.countsRev++
+      root.bump("countsRev")
       if (!root.convs[chan]) root.adoptUnknown(chan)
       if (root.openIms && root.convs[chan] && Model.isDm(root.convs[chan]) && !root.openIms[chan]) { root.openIms[chan] = true; root.sectionsRev++ }
       if (reading) markSoon.restart()
@@ -1443,6 +1513,7 @@ Item {
       if (!root.presenceLive && root.foreground) root.pollPresence()
       root.pollOthersDnd()
       root.sweepStatuses()
+      root.sweepDnd()
     }
   }
 
@@ -1454,7 +1525,7 @@ Item {
     root._statusSweep = now
     for (var id in root.users) {
       var x = root.users[id].statusExp
-      if (x > since && x <= now) { root.usersRev++; return }
+      if (x > since && x <= now) { root.bump("usersRev"); return }
     }
   }
 
@@ -1475,7 +1546,7 @@ Item {
     onTriggered: {
       var uid = root._presenceQueue.shift()
       if (!uid) { stop(); return }
-      root.api("users.getPresence", { user: uid }, function(b) { root.presence[uid] = b.presence === "active"; root.presenceRev++ }, function() {})
+      root.api("users.getPresence", { user: uid }, function(b) { root.setPresence(uid, b.presence === "active") }, function() {})
     }
   }
 
@@ -1499,11 +1570,7 @@ Item {
     if (!ids.length) return
     root.api("dnd.teamInfo", { users: ids.join(",") }, function(b) {
       var u = b.users || {}
-      for (var uid in u) {
-        var d = u[uid] || {}
-        root.othersDnd[uid] = d.snooze_enabled ? { start: 0, end: d.snooze_endtime || 0 } : (d.dnd_enabled ? { start: d.next_dnd_start_ts || 0, end: d.next_dnd_end_ts || 0 } : { start: 0, end: 0 })
-      }
-      root.presenceRev++
+      for (var uid in u) root.setOthersDnd(uid, root.dndWindow(u[uid] || {}))
     }, function() {})
   }
 
@@ -1593,16 +1660,13 @@ Item {
         fresh.guest = keep.guest
         fresh.member = keep.member
         root.convs[convId] = fresh
-        root.convsRev++
+        root.bump("convsRev")
       }, function() {})
     }
     if (c && c.kind === "im" && c.user) {
-      root.api("users.info", { user: c.user }, function(b) { root.applyUser(b.user); root.usersRev++ }, function() {})
-      root.api("dnd.info", { user: c.user }, function(b) {
-        root.othersDnd[c.user] = b.snooze_enabled ? { start: 0, end: b.snooze_endtime || 0 } : (b.dnd_enabled ? { start: b.next_dnd_start_ts || 0, end: b.next_dnd_end_ts || 0 } : { start: 0, end: 0 })
-        root.presenceRev++
-      }, function() {})
-      if (!root.presenceLive) root.api("users.getPresence", { user: c.user }, function(b) { root.presence[c.user] = b.presence === "active"; root.presenceRev++ }, function() {})
+      root.api("users.info", { user: c.user }, function(b) { root.applyUser(b.user); root.bump("usersRev") }, function() {})
+      root.api("dnd.info", { user: c.user }, function(b) { root.setOthersDnd(c.user, root.dndWindow(b)) }, function() {})
+      if (!root.presenceLive) root.api("users.getPresence", { user: c.user }, function(b) { root.setPresence(c.user, b.presence === "active") }, function() {})
     }
     if (!(c && c.guest)) {
       root.recents = [convId].concat(root.recents.filter(function(x) { return x !== convId })).slice(0, root.maxRecents)
@@ -1908,11 +1972,17 @@ Item {
   }
 
   // ---------------------------------------------------------------- sending
+  // True when it changed. draftsRev moves only when a draft comes or goes.
   function setDraft(conv, text) {
-    if (!conv) return
-    if (text && text.trim()) root.drafts[conv] = text
+    if (!conv) return false
+    var next = text && text.trim() ? text : ""
+    var had = !!root.drafts[conv]
+    if ((root.drafts[conv] || "") === next) return false
+    if (next) root.drafts[conv] = next
     else delete root.drafts[conv]
-    root.draftsRev++
+    if (had !== !!next) root.draftsRev++
+    else root.draftTextRev++
+    return true
   }
 
   // Composer text with its mention/channel picks (`refs`: [{label, wire}])
@@ -3042,18 +3112,15 @@ Item {
       cb(root.users[uid])
     }, function() { cb(root.users[uid] || null) })
     if (uid !== root.me.id) {
-      root.api("users.getPresence", { user: uid }, function(b) { root.presence[uid] = b.presence === "active"; root.presenceRev++ }, function() {})
-      root.api("dnd.info", { user: uid }, function(b) {
-        root.othersDnd[uid] = b.snooze_enabled ? { start: 0, end: b.snooze_endtime || 0 } : (b.dnd_enabled ? { start: b.next_dnd_start_ts || 0, end: b.next_dnd_end_ts || 0 } : { start: 0, end: 0 })
-        root.presenceRev++
-      }, function() {})
+      root.api("users.getPresence", { user: uid }, function(b) { root.setPresence(uid, b.presence === "active") }, function() {})
+      root.api("dnd.info", { user: uid }, function(b) { root.setOthersDnd(uid, root.dndWindow(b)) }, function() {})
     }
   }
 
   function setVip(uid, on) {
     if (on) root.vips[uid] = true
     else delete root.vips[uid]
-    root.usersRev++
+    root.vipsRev++
     root.api(on ? "users.priority.add" : "users.priority.remove", { user: uid }, function() {}, function(err) { root.say(root.errorText(err)); root.loadVips() })
   }
 

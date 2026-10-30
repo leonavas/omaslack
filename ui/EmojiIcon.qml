@@ -27,20 +27,51 @@ Item {
   readonly property bool useImage: !!res && (!!res.url || e.app.slackEmoji)
   readonly property string src: !res ? "" : (res.url ? res.url : E.imageUrl(E.known(res.glyph) || res.glyph))
 
-  AnimatedImage {
+  // A GIF plays while it's in sight; any other picture is a still one,
+  // decoded at a step of a short ladder (nearby sizes share it in Qt's cache).
+  readonly property bool gif: /\.gif(\?|#|$)/i.test(e.src)
+  readonly property int px: {
+    var want = e.size * 2
+    var steps = [32, 48, 64, 96]
+    for (var i = 0; i < steps.length; i++) if (steps[i] >= want) return steps[i]
+    return 128
+  }
+  readonly property int picStatus: img.item ? img.item.status : Image.Null
+
+  Loader {
     id: img
     anchors.fill: parent
-    visible: e.useImage && status === Image.Ready
-    source: e.useImage ? e.src : ""
-    asynchronous: true
-    fillMode: Image.PreserveAspectFit
-    playing: visible
-    smooth: true
-    mipmap: true
+    active: e.useImage
+    sourceComponent: e.gif ? gifC : stillC
+  }
+  Component {
+    id: stillC
+    Image {
+      visible: status === Image.Ready
+      source: e.src
+      asynchronous: true
+      fillMode: Image.PreserveAspectFit
+      sourceSize.width: e.px
+      sourceSize.height: e.px
+      smooth: true
+      mipmap: true
+    }
+  }
+  Component {
+    id: gifC
+    AnimatedImage {
+      visible: status === Image.Ready
+      source: e.src
+      asynchronous: true
+      fillMode: Image.PreserveAspectFit
+      playing: visible && e.app.onScreen
+      smooth: true
+      mipmap: true
+    }
   }
   Text {
     anchors.centerIn: parent
-    visible: !e.useImage || img.status === Image.Error || img.status === Image.Loading && !!e.res && !!e.res.glyph
+    visible: !e.useImage || e.picStatus === Image.Error || e.picStatus === Image.Loading && !!e.res && !!e.res.glyph
     width: e.size
     text: e.res ? (e.res.glyph || "") : "?"
     textFormat: Text.PlainText

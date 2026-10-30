@@ -30,7 +30,7 @@ BubbleTip {
         source: tip.src
         asynchronous: true
         fillMode: Image.PreserveAspectFit
-        playing: tip.visible
+        playing: tip.visible && tip.app.onScreen
         smooth: true
         mipmap: true
       }

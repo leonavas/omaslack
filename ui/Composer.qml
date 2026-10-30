@@ -159,8 +159,7 @@ Rectangle {
   }
   function saveDraft(key) {
     if (!key || box.editing || !box.ws) return
-    box.ws.setDraft(key, RD.toMarkup(box.doc))
-    box.app.setTeamSetting(box.ws.teamId, "drafts", box.ws.drafts)
+    if (box.ws.setDraft(key, RD.toMarkup(box.doc))) box.app.setTeamSetting(box.ws.teamId, "drafts", box.ws.drafts)
   }
   function saveDraftNow() { if (draftSave.running) { draftSave.stop(); box.saveDraft(box._draftFor) } }
 

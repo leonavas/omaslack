@@ -244,7 +244,7 @@ TextEdit {
       source: g ? g.url : ""
       asynchronous: true
       fillMode: Image.PreserveAspectFit
-      playing: visible && inView
+      playing: visible && inView && rt.app.onScreen
       smooth: true
       mipmap: true
     }
