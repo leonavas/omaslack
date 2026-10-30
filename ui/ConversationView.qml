@@ -23,6 +23,10 @@ Item {
   onConvIdChanged: { cv.tab = "messages"; Qt.callLater(function() { cv.focusComposer() }) }
 
   function focusComposer() { if (composerLoader.item) composerLoader.item.focusInput() }
+  function searchHere() { cv.win.search("in:" + (cv.c && !cv.dm ? "#" + cv.c.name : "@" + (cv.other ? cv.other.handle || cv.other.name : "")) + " ") }
+
+  // Ctrl+F: search this conversation, as Slack does.
+  Shortcut { sequence: "Ctrl+F"; enabled: cv.visible && !!cv.c; onActivated: cv.searchHere() }
 
   readonly property string readOnly: {
     if (!c) return ""
@@ -148,8 +152,8 @@ Item {
         IconButton {
           app: cv.app
           icon: "󰍉"
-          tip: cv.app.tr("Search in this conversation", "Buscar nesta conversa")
-          onClicked: cv.win.search("in:" + (cv.c && !cv.dm ? "#" + cv.c.name : "@" + (cv.other ? cv.other.handle || cv.other.name : "")) + " ")
+          tip: cv.app.tr("Search in this conversation", "Buscar nesta conversa") + "  Ctrl+F"
+          onClicked: cv.searchHere()
         }
         IconButton {
           id: moreBtn

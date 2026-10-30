@@ -17,6 +17,7 @@ DialogFrame {
   readonly property var groups: [
     { en: "Navigation", pt: "Navegação", rows: [
       { keys: [["Ctrl", "K"], ["Ctrl", "T"], ["Ctrl", "G"]], en: "Search, or jump to a conversation", pt: "Buscar, ou ir para uma conversa" },
+      { keys: [["Ctrl", "F"]], en: "Search in this conversation", pt: "Buscar nesta conversa" },
       { keys: [["Alt", "↑"], ["Alt", "↓"]], join: "/", en: "Previous / next conversation", pt: "Conversa anterior / próxima" },
       { keys: [["Alt", "Shift", "↑"], ["Ctrl", "Shift", "A"]], en: "Previous unread conversation", pt: "Conversa não lida anterior" },
       { keys: [["Alt", "Shift", "↓"]], en: "Next unread conversation", pt: "Próxima conversa não lida" },
