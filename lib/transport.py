@@ -10,7 +10,7 @@ JSON lines:
   stdin   {"id": 7, "op": "call", "method": "auth.test", "params": {...}}
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
-Ops: creds, call, download, post_file, multipart, read_cookie, write_private,
+Ops: creds, call, download, video_frame, stream, post_file, multipart, read_cookie, write_private,
 secret_store, secret_lookup, secret_clear, ws_open, ws_send, ws_close. Socket
 traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
@@ -19,9 +19,11 @@ Credentials only ever arrive on stdin and only ever go to slack.com hosts.
 
 import base64
 import gzip
+import hmac
 import json
 import os
 import random
+import secrets
 import shutil
 import socket
 import sqlite3
@@ -36,6 +38,7 @@ import urllib.parse
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPSConnection, HTTPException
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def chrome_ua():
@@ -111,9 +114,12 @@ def drop_conn(host):
             pass
 
 
-def request(method, url, body=None, headers=None, stream_to=None):
+def request(method, url, body=None, headers=None, stream_to=None, progress=None, limit=0):
     """One request on this thread's kept-alive connection; a stale one is
-    reopened once. Returns (status, headers, bytes or None)."""
+    reopened once. Returns (status, headers, bytes or None). `progress`
+    (with `stream_to`): called with (bytes so far, total or 0) as it goes.
+    `limit`: at most that much of a body is read (the rest is dropped with
+    the connection), for a Range a server may answer with the whole file."""
     u = urllib.parse.urlsplit(url)
     host = u.hostname
     path = u.path or "/"
@@ -129,13 +135,34 @@ def request(method, url, body=None, headers=None, stream_to=None):
             r = c.getresponse()
             rh = {k.lower(): v for k, v in r.getheaders()}
             if stream_to is not None and r.status == 200:
+                # A retry starts the file over, not after what came before.
+                stream_to.seek(0)
+                stream_to.truncate()
                 enc = rh.get("content-encoding", "")
                 if enc:
                     data = decode(r.read(), enc)
                     stream_to.write(data)
+                elif progress:
+                    try:
+                        total = int(rh.get("content-length") or 0)
+                    except ValueError:
+                        total = 0
+                    done = 0
+                    while True:
+                        chunk = r.read(1 << 16)
+                        if not chunk:
+                            break
+                        stream_to.write(chunk)
+                        done += len(chunk)
+                        progress(done, total)
                 else:
                     shutil.copyfileobj(r, stream_to, 1 << 16)
                 return r.status, rh, None
+            if limit and stream_to is None:
+                data = r.read(limit)
+                if not r.isclosed():
+                    drop_conn(host)
+                return r.status, rh, data
             data = decode(r.read(), rh.get("content-encoding", ""))
             if rh.get("connection", "").lower() == "close":
                 drop_conn(host)
@@ -204,13 +231,24 @@ def op_download(msg):
         except OSError:
             pass
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    # `progress`: {"id", "progress": bytes, "total": bytes or 0} lines
+    # before the answer, a few a second at most.
+    report = None
+    if msg.get("progress"):
+        last = [0.0]
+
+        def report(done, total):
+            now = time.monotonic()
+            if now - last[0] >= 0.2:
+                last[0] = now
+                emit({"id": msg.get("id"), "progress": done, "total": total})
     for _ in range(6):
         u = urllib.parse.urlsplit(url)
         headers = auth_headers() if is_slack(u.hostname) else {}
         tmp = dest + ".part"
         try:
             with open(tmp, "wb") as f:
-                status, rh, data = request("GET", url, None, headers, stream_to=f)
+                status, rh, data = request("GET", url, None, headers, stream_to=f, progress=report)
         except Exception as e:
             return {"ok": False, "error": str(e)}
         if status in (301, 302, 303, 307, 308) and rh.get("location"):
@@ -233,6 +271,189 @@ def op_download(msg):
         os.replace(tmp, dest)
         return {"ok": True, "path": dest, "mime": mime}
     return {"ok": False, "error": "redirects"}
+
+
+# A video's cover: a frame from its first second, blurred, without the whole
+# file. Its start comes by Range, and an mp4's index (the `moov` box) too
+# when it sits after the media; both go into a sparse file of the video's
+# size, which ffmpeg reads as if it were all there.
+COVER_HEAD = 8 << 20
+COVER_TAIL_MAX = 24 << 20
+
+
+def get_range(url, start, end):
+    """Bytes start..end (inclusive; end None: to the file's end) and the
+    file's total size, following redirects."""
+    want = (end - start + 1) if end is not None else COVER_TAIL_MAX
+    for _ in range(6):
+        u = urllib.parse.urlsplit(url)
+        headers = auth_headers() if is_slack(u.hostname) else {}
+        headers["Range"] = "bytes=%d-%s" % (start, "" if end is None else end)
+        headers["Accept-Encoding"] = "identity"
+        status, rh, data = request("GET", url, None, headers, limit=want + 1)
+        if status in (301, 302, 303, 307, 308) and rh.get("location"):
+            url = urllib.parse.urljoin(url, rh["location"])
+            continue
+        if status != 206:
+            raise OSError("no range (http %d)" % status)
+        total = int(rh.get("content-range", "").rpartition("/")[2] or 0)
+        return data[:want], total
+    raise OSError("redirects")
+
+
+def moov_after(head, total):
+    """Where an mp4's boxes past `head` begin when its `moov` isn't in it,
+    else None (found, or not an mp4)."""
+    if head[4:8] != b"ftyp":
+        return None
+    off = 0
+    while off + 8 <= len(head):
+        size, kind = struct.unpack(">I4s", head[off:off + 8])
+        if size == 1 and off + 16 <= len(head):
+            size = struct.unpack(">Q", head[off + 8:off + 16])[0]
+        elif size == 0:
+            size = total - off
+        if kind == b"moov" or size < 8:
+            return None
+        off += size
+    return off if off < total else None
+
+
+def op_video_frame(msg):
+    dest = msg["dest"]
+    try:
+        if os.path.getsize(dest) > 0:
+            os.utime(dest)
+            return {"ok": True, "path": dest, "cached": True}
+    except OSError:
+        pass
+    if not shutil.which("ffmpeg"):
+        return {"ok": False, "error": "no ffmpeg"}
+    url = msg["url"]
+    head, total = get_range(url, 0, COVER_HEAD - 1)
+    tail_at = moov_after(head, total) if total > len(head) else None
+    tail = b""
+    if tail_at is not None:
+        if total - tail_at > COVER_TAIL_MAX:
+            return {"ok": False, "error": "index too far"}
+        tail, _ = get_range(url, tail_at, None)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    fd, sparse = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.truncate(max(total, len(head)))
+            f.write(head)
+            if tail:
+                f.seek(tail_at)
+                f.write(tail)
+        tmp = dest + ".part.jpg"
+        # A second in (the first frames are often black), else the start.
+        for at in (msg.get("at", 1.0), 0):
+            r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-ss", str(at), "-i", sparse, "-frames:v", "1",
+                                "-vf", "scale=640:-2,gblur=sigma=%s" % msg.get("blur", 6), "-q:v", "4", tmp],
+                               capture_output=True, timeout=40)
+            if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, dest)
+                return {"ok": True, "path": dest}
+        return {"ok": False, "error": "no frame"}
+    finally:
+        for p in (sparse, dest + ".part.jpg"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+# Videos and sounds played as they come: a server on 127.0.0.1 (a port of
+# its own, a random secret in every path) that hands the player what it asks
+# for, Range and all, fetched from Slack with the session. The player gets
+# http://127.0.0.1:port/<secret>/<n>, never the session.
+stream = {"server": None, "base": "", "token": "", "urls": {}, "ids": {}}
+stream_lock = threading.Lock()
+STREAM_HEADERS = ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag")
+
+
+class StreamHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_HEAD(self):
+        self.relay(False)
+
+    def do_GET(self):
+        self.relay(True)
+
+    def relay(self, body):
+        parts = self.path.split("/")
+        url = stream["urls"].get(parts[2]) if len(parts) == 3 and hmac.compare_digest(parts[1], stream["token"]) else None
+        if not url:
+            self.send_error(404)
+            return
+        rng = self.headers.get("Range")
+        c = r = None
+        for _ in range(6):
+            u = urllib.parse.urlsplit(url)
+            headers = auth_headers() if is_slack(u.hostname) else {}
+            headers["User-Agent"] = UA
+            headers["Accept-Encoding"] = "identity"
+            if rng:
+                headers["Range"] = rng
+            c = HTTPSConnection(u.hostname, u.port or 443, timeout=40, context=ctx)
+            try:
+                c.request("GET" if body else "HEAD", (u.path or "/") + ("?" + u.query if u.query else ""), headers=headers)
+                r = c.getresponse()
+            except (HTTPException, OSError):
+                c.close()
+                self.send_error(502)
+                return
+            if r.status in (301, 302, 303, 307, 308) and r.getheader("location"):
+                url = urllib.parse.urljoin(url, r.getheader("location"))
+                c.close()
+                continue
+            break
+        else:
+            self.send_error(502)
+            return
+        try:
+            self.send_response(r.status)
+            for h in STREAM_HEADERS:
+                v = r.getheader(h)
+                if v:
+                    self.send_header(h, v)
+            if not r.getheader("Content-Length"):
+                self.send_header("Connection", "close")
+                self.close_connection = True
+            self.end_headers()
+            if body:
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except OSError:
+            # The player went elsewhere (a seek) or away.
+            self.close_connection = True
+        finally:
+            c.close()
+
+
+def op_stream(msg):
+    url = msg["url"]
+    with stream_lock:
+        if not stream["server"]:
+            srv = ThreadingHTTPServer(("127.0.0.1", 0), StreamHandler)
+            srv.daemon_threads = True
+            stream["server"] = srv
+            stream["token"] = secrets.token_urlsafe(24)
+            stream["base"] = "http://127.0.0.1:%d/%s/" % (srv.server_address[1], stream["token"])
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        n = stream["ids"].get(url)
+        if n is None:
+            n = stream["ids"][url] = str(len(stream["ids"]) + 1)
+            stream["urls"][n] = url
+    return {"ok": True, "url": stream["base"] + n}
 
 
 def free_name(dest):
@@ -625,6 +846,8 @@ def op_ws_close(msg):
 OPS = {
     "call": op_call,
     "download": op_download,
+    "video_frame": op_video_frame,
+    "stream": op_stream,
     "post_file": op_post_file,
     "multipart": op_multipart,
     "read_cookie": op_read_cookie,

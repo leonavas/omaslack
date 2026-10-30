@@ -20,7 +20,7 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 - **Files**: a rail item with a hover card of recent and starred files, and a full page with All / Created by you / Shared with you, type filters, sorting, search, download and star.
 - **DMs, Activity and Later** tabs in the rail, each with a hover card, plus Drafts. Activity has a Recent channels tab: the unmuted channels by their latest message.
 - **Message actions**: edit, delete, forward, save for later, remind, mark unread, pin, copy link, and turning reply notifications on or off for a thread.
-- **Rich content**: Block Kit, attachments, shared messages (a card with the author, the day, where it was posted and its files, opening the original on click), apps and bots with their names and pictures, inline images and an image viewer. Apps' link cards (a Jira issue, for instance) are drawn as Slack draws them, with their fields, buttons and Refresh.
+- **Rich content**: Block Kit, attachments, shared messages (a card with the author, the day, where it was posted and its files, opening the original on click), apps and bots with their names and pictures, inline images and an image viewer, videos and sounds played inline (a video expands into the viewer). Apps' link cards (a Jira issue, for instance) are drawn as Slack draws them, with their fields, buttons and Refresh.
 - **Channels**: details (topic, description, members, notifications), channel managers, removing members, rename, archive, convert, delete, invite, browse channels, and new channel or new message.
 - **You**: status, away or active, pausing notifications (Slack's do-not-disturb), and editing your profile.
 - **Multiple workspaces**, stacked or expanded in the rail. Ctrl+Tab and Ctrl+1…9 switch between them.
@@ -88,6 +88,8 @@ Nothing beyond what ships with Omarchy. The network helper is Python using only 
 | `omarchy-file-select` | Choosing files to attach and a profile photo |
 | `pw-play` | The notification sound |
 | `hyprctl` | Parking the window in the scratchpad and bringing it back |
+
+Videos and sounds play right in the message with Qt Multimedia (`qt6-multimedia`, optional: without it they stay file cards that open in your player).
 
 If the sign-in window can't open, **Sign in with a token** works without it. Files are chosen with Omarchy's own chooser (`omarchy-file-select`); `zenity` is an optional fallback for when that one is missing or can't open.
 
