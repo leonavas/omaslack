@@ -285,7 +285,7 @@ Column {
     Loader {
       readonly property var p: parent.modelData
       // Handed in as it's made, so its bindings never see it without them.
-      Component.onCompleted: setSource(p.work ? "WorkObjectView.qml" : "AttachmentView.qml",
+      Component.onCompleted: setSource(p.work ? "WorkObjectView.qml" : p.isMsg ? "SharedMessageView.qml" : "AttachmentView.qml",
                                        { app: body.app, win: body.win, ws: body.ws, conv: body.conv, att: p,
                                          linkHandler: body.link, imageSource: body.imageSource, pressHandler: body.press })
       onLoaded: {
