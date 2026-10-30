@@ -213,7 +213,8 @@ DialogFrame {
       color: d.t.alpha(d.t.bg, 0.6)
       border.width: input.activeFocus ? 2 : 1
       border.color: input.activeFocus ? d.t.accent : d.t.lineStrong
-      z: 2
+      // Over the note (z 3, for its own popups) while choosing.
+      z: d.picking ? 4 : 2
 
       MouseArea { anchors.fill: parent; cursorShape: Qt.IBeamCursor; onClicked: if (!d.dest) input.forceActiveFocus() }
 
