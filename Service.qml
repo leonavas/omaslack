@@ -314,7 +314,7 @@ Item {
     if (root.setting("active", "") === teamId) root.setSetting("active", root.currentTeam)
     // A Slack id, or nothing is deleted (files/<id> sits beside files/avatars).
     if (!/^[A-Z0-9]+$/.test(String(teamId))) return
-    var gone = [(root.runDir || root.cacheDir) + "/team-" + teamId + ".json", root.cacheDir + "/files/" + teamId]
+    var gone = [(root.runDir || root.cacheDir) + "/team-" + teamId + ".json", (root.runDir || root.cacheDir) + "/team-" + teamId + "-msgs.json", root.cacheDir + "/files/" + teamId]
     if (!root.accounts.length && !loginProc.running) gone.push(root.webProfile, root.webCache)
     Quickshell.execDetached(["rm", "-rf", "--"].concat(gone))
   }
@@ -445,6 +445,7 @@ Item {
   property bool stowing: false
 
   function showWindow() {
+    root.makeWindow()
     if (!root.windowOpen) { root.launchWindow(true); return }
     if (root.barOptions.openInSpecial === true) {
       // Out on a workspace (opened before "Open in Scratchpad" was on, or
@@ -482,6 +483,7 @@ Item {
   property string launchTitle: ""
   readonly property string launchRule: "omaslack-launch"
   function launchWindow(foreground) {
+    root.makeWindow()
     if (root._launchPending) return
     root._launchForeground = foreground
     root._launchBack = root.lastOtherAddress
@@ -799,11 +801,21 @@ Item {
   readonly property alias theme: themeObj
   readonly property var window: windowLoader.item
 
-  // The window is made once the app is complete (views read it at birth).
+  // The window is made the first time it opens, not at start-up (the app
+  // complete by then: views read it at birth), and kept once closed.
+  // Whatever opens it (showWindow, launchWindow) makes it first, so a
+  // dialog or a jump asked for with it is there to take them; and wakes
+  // what it let go of off screen (AppWindow.asleep).
   property bool ready: false
+  property bool windowMade: false
+  function makeWindow() {
+    root.windowMade = true
+    if (root.window) root.window.wake()
+  }
+  onWindowOpenChanged: if (root.windowOpen) root.makeWindow()
   LazyLoader {
     id: windowLoader
-    active: root.ready
+    active: root.ready && root.windowMade
     AppWindow { app: root }
   }
   readonly property var appWindow: windowLoader.item
@@ -1179,6 +1191,8 @@ Item {
     if (root.runDir) Quickshell.execDetached(["sh", "-c", 'rm -rf -- "$1"/team-*.json "$2"', "omaslack-old", root.cacheDir, root.dataDir])
     photoList.running = true
     Registry.service = root
+    // Asked open at start-up (SLACKQS_OPEN): made with the app.
+    if (root.windowOpen) root.windowMade = true
     root.ready = true
     Qt.callLater(function() {
       root.startUp()

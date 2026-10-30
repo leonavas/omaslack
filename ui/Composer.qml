@@ -63,6 +63,8 @@ Rectangle {
   property int _anchor: 0
   property int _lastPos: 0
   property double _undoAt: 0
+  property int _decoFrom: -1     // where the bars and GIFs may have moved from, till they're placed (-1: nowhere)
+  property real _contentH: 0
 
   readonly property var c: ws ? ws.conv(conv) : null
   readonly property string sendLabel: editing ? app.tr("Save", "Salvar") : app.tr("Send now", "Enviar agora")
@@ -207,21 +209,42 @@ Rectangle {
   // animated emoji play: on the see-through picture that holds their place,
   // centered in the line the way the text draws it. An emoji keeps its
   // player while the text moves it: it's known by its picture and which
-  // one of that picture it is.
-  function layoutDecos() {
-    if (box._dirty) return
-    var out = []
-    RD.groups(box.doc).forEach(function(g) {
-      var a = input.positionToRectangle(g.from), b = input.positionToRectangle(g.to)
-      out.push({ k: g.k, y: a.y, h: b.y + b.height - a.y })
+  // one of that picture it is. `from`: the text changed from there on (the
+  // start of a line), so what ends before it stays where it was; placed
+  // once, after everything that moved them this time round.
+  function layoutDecos(from) {
+    from = from === undefined ? 0 : from
+    box._decoFrom = box._decoFrom < 0 ? from : Math.min(box._decoFrom, from)
+    Qt.callLater(box.placeDecos)
+  }
+  function placeDecos() {
+    var from = box._decoFrom
+    if (from < 0 || box._dirty) return
+    box._decoFrom = -1
+    var old = box.decos, out = [], moved = false
+    RD.groups(box.doc).forEach(function(g, i) {
+      var d = g.to < from ? old[i] : null
+      if (!d) {
+        var a = input.positionToRectangle(g.from), b = input.positionToRectangle(g.to)
+        d = { k: g.k, y: a.y, h: b.y + b.height - a.y }
+      }
+      var o = old[i]
+      if (!o || o.k !== d.k || o.y !== d.y || o.h !== d.h) moved = true
+      out.push(d)
     })
-    box.decos = out
-    var px = box.t.emojiPx, nth = {}
-    box.gifs = RD.gifs(box.doc).map(function(e) {
-      var r = input.positionToRectangle(e.pos)
+    if (moved || out.length !== old.length) box.decos = out
+    var px = box.t.emojiPx, nth = {}, was = box.gifs
+    moved = false
+    var gs = RD.gifs(box.doc).map(function(e, i) {
       nth[e.url] = (nth[e.url] || 0) + 1
-      return { key: e.url + "#" + nth[e.url], url: e.url, x: Math.round(r.x), y: Math.round(r.y + (r.height - px) / 2) }
+      var key = e.url + "#" + nth[e.url], o = was[i]
+      if (e.pos < from && o && o.key === key) return o
+      var r = input.positionToRectangle(e.pos)
+      var g = { key: key, url: e.url, x: Math.round(r.x), y: Math.round(r.y + (r.height - px) / 2) }
+      if (!o || o.key !== g.key || o.x !== g.x || o.y !== g.y) moved = true
+      return g
     })
+    if (moved || gs.length !== was.length) box.gifs = gs
   }
 
   // The cursor moved: never inside a pill; the toolbar and the
@@ -241,25 +264,38 @@ Rectangle {
   // ---------------------------------------------------------------- editing
   // Qt changed the text (typing, deleting, its own paste): the change goes
   // into the document, Slack's markdown is applied, and it's drawn again
-  // once Qt is done with the key.
+  // once Qt is done with the key. A plain character typed or deleted that
+  // Qt already shows the way the document draws it (RD.applyDiff's
+  // `inPlace`) isn't drawn again: the document just follows.
   function edited() {
     var now = RD.normalize(input.getText(0, input.length))
+    var shown = !box._dirty && !input.inputMethodComposing
     var res = RD.applyDiff(box.doc, now, input.cursorPosition, box.typing)
     if (!res) return
     box.remember(res.at, res.typed && !/\s/.test(res.text))
     box.doc = res.doc
-    var cur = res.cursor, typing = null
+    var cur = res.cursor, typing = null, af = null
     if (res.typed) {
-      var af = RD.autoformat(box.doc, cur, box.dctx())
+      af = RD.autoformat(box.doc, cur, box.dctx())
       // Undo first takes the formatting back, leaving what was typed.
       if (af) { box.remember(cur, false); box.doc = af.doc; cur = af.cursor; typing = af.typing }
     }
     box.typing = typing
-    box._dirty = true
     box._cursor = cur
     box._anchor = cur
-    Qt.callLater(box.flush)
+    if (shown && res.inPlace && !af && cur === input.cursorPosition && input.selectionStart === input.selectionEnd) box.settle(res.at)
+    else { box._dirty = true; Qt.callLater(box.flush) }
     box.touched()
+  }
+
+  // What render does after drawing, for a change Qt already shows.
+  function settle(at) {
+    box._lastPos = input.cursorPosition
+    box.acText = RD.masked(box.doc)
+    box.hasText = !RD.isBlank(box.doc)
+    box.updateMarks()
+    box.layoutDecos(RD.lineStart(box.doc, at))
+    complete.update()
   }
 
   // A change made here (toolbar, shortcuts, picks): drawn at once.
@@ -727,11 +763,13 @@ Rectangle {
         onSelectionEndChanged: if (!box._rendering) Qt.callLater(box.cursorMoved)
         onPressed: box.typing = null
         onInputMethodComposingChanged: if (!inputMethodComposing) box.flush()
-        onContentSizeChanged: box.layoutDecos()
-        onWidthChanged: Qt.callLater(box.layoutDecos)
-        onFontChanged: Qt.callLater(box.layoutDecos)
+        // Lines added or gone move everything (a wider text alone, as it's
+        // typed, doesn't).
+        onContentSizeChanged: if (contentHeight !== box._contentH) { box._contentH = contentHeight; box.layoutDecos() }
+        onWidthChanged: box.layoutDecos()
+        onFontChanged: box.layoutDecos()
         // An input method's unfinished word pushes what follows along.
-        onPreeditTextChanged: Qt.callLater(box.layoutDecos)
+        onPreeditTextChanged: box.layoutDecos(RD.lineStart(box.doc, cursorPosition))
 
         // Quote bars and code block boxes, under the text.
         Repeater {
@@ -769,7 +807,7 @@ Rectangle {
             source: modelData.url
             asynchronous: true
             fillMode: Image.PreserveAspectFit
-            playing: visible && inView
+            playing: visible && inView && box.app.onScreen
             smooth: true
             mipmap: true
           }

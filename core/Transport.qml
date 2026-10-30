@@ -25,6 +25,20 @@ Item {
   signal socketOpened()
   signal socketClosed(string reason)
 
+  // Socket events dropped in transport.py, never parsed here: those
+  // Workspace.onEvent has no case for that come often (huddles, files,
+  // apps, member lists, notifications), plus untyped replies. A type it
+  // starts to handle comes off this list.
+  property var socketQuiet: ["pong", "desktop_notification", "reconnect_url", "accounts_changed",
+    "file_shared", "file_public", "file_unshared", "file_change", "file_created", "file_deleted",
+    "file_comment_added", "file_comment_edited", "file_comment_deleted",
+    "member_joined_channel", "member_left_channel", "channel_history_changed", "group_history_changed", "im_history_changed",
+    "user_huddle_changed", "sh_room_join", "sh_room_leave", "sh_room_update", "huddle_updated",
+    "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed",
+    "apps_changed", "apps_installed", "apps_uninstalled", "commands_changed", "bot_added", "bot_changed",
+    "team_profile_change", "team_profile_reorder", "team_profile_delete", "user_read_only_channels",
+    "draft_create", "draft_update", "draft_delete", "drafts_updated"]
+
   property int _seq: 0
   property var _pending: ({})
   property var _progress: ({})   // id → onProgress(done, total) of a download
@@ -48,8 +62,20 @@ Item {
     return id
   }
 
-  // Web API: cb({ok, status, body, error}).
-  function call(method, params, cb) { return _request({ op: "call", method: method, params: params || {} }, cb) }
+  // Web API: cb({ok, status, body, error}). `pick` ({members: ["id",
+  // "profile.image_72", …]}, or `_pick` among the params, for calls that
+  // only pass params along): those lists' items come with only those fields.
+  function call(method, params, cb, pick) {
+    var p = params || {}
+    if (p._pick) {
+      pick = pick || p._pick
+      p = U.copy(p)
+      delete p._pick
+    }
+    var obj = { op: "call", method: method, params: p }
+    if (pick) obj.pick = pick
+    return _request(obj, cb)
+  }
   // `reuse`: a file already at `dest` is kept (and marked as just used).
   // `noClobber`: one already there stays; this one gets "name (1).ext"…
   // `onProgress(done, total)`: as it arrives (total 0 when not known).
@@ -75,7 +101,10 @@ Item {
   function secretStore(team, label, secret, cb) { return _request({ op: "secret_store", team: team, label: label, secret: secret }, cb) }
   function secretLookup(team, cb) { return _request({ op: "secret_lookup", team: team }, cb) }
   function secretClear(team, cb) { return _request({ op: "secret_clear", team: team }, cb) }
-  function openSocket(url) { _write({ op: "ws_open", url: url }) }
+  // The cache's files (transport.py's sweep): those of `dirs` a `days`
+  // unused go, then `capDir`'s least recently used while over `cap` bytes.
+  function sweep(dirs, capDir, cap, days, cb) { return _request({ op: "sweep", dirs: dirs, cap_dir: capDir || "", cap: cap || 0, days: days || 7 }, cb) }
+  function openSocket(url) { _write({ op: "ws_open", url: url, quiet: root.socketQuiet }) }
   function sendSocket(data) { if (root.socketOpen) _write({ op: "ws_send", data: data }) }
   function closeSocket() { _write({ op: "ws_close" }) }
 

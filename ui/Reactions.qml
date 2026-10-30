@@ -46,8 +46,15 @@ Flow {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: rx.ws.react(rx.conv, rx.msg.ts, pill.modelData.name)
+        onContainsMouseChanged: if (containsMouse) pillTip.active = true
       }
-      ReactionTip { app: rx.app; ws: rx.ws; reaction: pill.modelData; hovered: pma.containsMouse }
+      // Made on the first hover: a tooltip is a popup.
+      Loader {
+        id: pillTip
+        anchors.fill: parent
+        active: false
+        sourceComponent: ReactionTip { app: rx.app; ws: rx.ws; reaction: pill.modelData; hovered: pma.containsMouse }
+      }
     }
   }
 
@@ -63,7 +70,13 @@ Flow {
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onClicked: rx.win.emojiPicker(parent, function(name) { rx.ws.react(rx.conv, rx.msg.ts, name) }, {})
+      onContainsMouseChanged: if (containsMouse) addTip.active = true
     }
-    PanelToolTip { visible: ama.containsMouse; text: rx.app.tr("Add reaction", "Adicionar reação") }
+    Loader {
+      id: addTip
+      anchors.fill: parent
+      active: false
+      sourceComponent: PanelToolTip { visible: ama.containsMouse; text: rx.app.tr("Add reaction", "Adicionar reação") }
+    }
   }
 }

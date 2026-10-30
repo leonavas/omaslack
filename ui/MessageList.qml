@@ -53,12 +53,22 @@ Item {
   }
   onRowsChanged: { Qt.callLater(root.keepSel); Qt.callLater(root.settle) }
 
+  // Moves only when this conversation (or thread) does, not with every
+  // other one's history (ws.historyRev); the New line moves with it.
+  property int histRev: 0
+  Connections {
+    target: root.ws
+    function onHistoryUpdated(c) { if (!root.inThread && c === root.conv) root.histRev++ }
+    function onRepliesUpdated(key) { if (root.inThread && key === root.conv + "/" + root.threadTs) root.histRev++ }
+  }
   readonly property var hist: {
     if (!ws) return null
-    if (inThread) return ws.repliesOf(conv, threadTs)
-    return ws.history(conv)
+    root.histRev
+    if (inThread) return ws.replies[conv + "/" + threadTs] || null
+    return ws.histories[conv] || null
   }
   readonly property var rows: {
+    root.histRev
     var s = root.hist
     if (!s) return []
     var msgs = s.msgs
@@ -88,6 +98,7 @@ Item {
     header: Item { width: list.width; height: root.t.sp(root.inThread ? 12 : 22) }
 
     delegate: MessageItem {
+      id: rowItem
       required property var modelData
       width: list.width
       app: root.app
@@ -99,6 +110,25 @@ Item {
       ctx: root.ctx
       selected: root.focusKey !== "" && root.focusKey === modelData.key
       keyed: root.focusKey !== "" && root.keyed
+      sharedBar: rowBar
+      onPointedChanged: root.point(rowItem)
+      onSelectedChanged: root.mark(rowItem)
+      Component.onCompleted: root.mark(rowItem)
+    }
+
+    // The rows' one toolbar (MessageItem.sharedBar), in the content so it
+    // scrolls and clips with them: over the keyboard's message while it
+    // leads, else over the one under the mouse.
+    MessageToolbar {
+      id: rowBar
+      app: root.app
+      win: root.win
+      ws: root.ws
+      row: root.focusKey !== "" && root.keyed ? root.keyRow : root.mouseRow
+      x: list.width - width - root.t.sp(16)
+      y: row ? row.y + row.barTop - root.t.sp(16) : 0
+      z: 20
+      onHoveredChanged: root.point(null)
     }
 
     // Visually above the oldest message (the list grows upward).
@@ -134,10 +164,22 @@ Item {
     }
     onMovementEnded: root.stick = root.nearNewest()
     // The wheel / touchpad, further than Qt's: the reader scrolling.
-    WheelScroll { view: list; step: root.t.sp(160); onWheeled: { glide.stop(); wheelOff.restart() } }
+    WheelScroll { view: list; step: root.t.sp(145); touch: 1.8; onWheeled: { glide.stop(); wheelOff.restart() } }
     Timer { id: wheelOff; interval: 600; onTriggered: root.stick = root.nearNewest() }
     onHeightChanged: root.maybeLoad()
   }
+
+  // The row under the mouse, and the one the toolbar is on: held while the
+  // mouse is on the toolbar (it rises over the row above). `keyRow`: the
+  // keyboard's.
+  property Item under: null
+  property Item mouseRow: null
+  property Item keyRow: null
+  function point(it) {
+    if (it) { if (it.pointed) root.under = it; else if (root.under === it) root.under = null }
+    if (!(rowBar.hovered && rowBar.visible)) root.mouseRow = root.under
+  }
+  function mark(it) { if (it.selected) root.keyRow = it; else if (root.keyRow === it) root.keyRow = null }
 
   function maybeLoad() {
     if (root.inThread || !root.ws || root.loading || root.atStart) return
