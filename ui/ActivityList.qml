@@ -11,7 +11,9 @@ import "../lib/Registry.js" as Reg
 // activity.feed (DMs, mentions, thread replies, reactions to your messages,
 // apps, invitations), newest first and by day, with All / DMs / Mentions /
 // Threads and Unreads. The feed only points at messages; they come one by
-// one (Workspace.fetchOne). A click opens the message. `peek`: the card
+// one (Workspace.fetchOne). A click opens the message. Recent channels is
+// ours, not the feed's: the unmuted channels by their newest message
+// (Workspace.recentChannels). `peek`: the card
 // hovering the rail's Activity shows (AppWindow), no tabs, its own Unreads.
 Rectangle {
   id: al
@@ -22,7 +24,7 @@ Rectangle {
   readonly property var ctx: ws ? ws.renderCtx(t.html, t.emojiPx) : null
   readonly property bool narrow: width < t.sp(150)
   property bool peek: false
-  property string filter: "all"          // all | dms | mentions | threads
+  property string filter: "all"          // all | dms | mentions | threads | recent
   readonly property string unreadsSetting: peek ? "activityPeekUnreads" : "activityUnreadsOnly"
   property bool unreadsOnly: app.setting(unreadsSetting, false) === true
   readonly property string selectedKey: win && !peek ? win.activityKey : ""
@@ -52,6 +54,7 @@ Rectangle {
 
   function load(more) {
     if (!al.ws || (more && (!al.cursor || al.loading))) return
+    if (al.filter === "recent") { al.serial++; al.loading = false; al.loaded = true; al.error = ""; al.cursor = ""; return }
     var n = more ? al.serial : ++al.serial
     al.loading = true
     al.ws.activityFeed(al.typesOf[al.filter], more ? al.cursor : "", al.unreadsOnly, function(r) {
@@ -144,19 +147,34 @@ Rectangle {
              where: where, whereIcon: whereIcon, emoji: r.reaction ? r.reaction.name : "" }
   }
 
+  // A recent channel, its newest message (when known) as the row.
+  function recentRowOf(r) {
+    var m = r.msg, a = m ? al.ws.author(m) : null
+    return { key: "rc/" + r.conv, type: "recent", conv: r.conv, ts: m ? m.ts : "", threadTs: "", when: r.latest, news: r.mentions,
+             unread: r.unread, user: m ? (m.user || "") : "", who: a ? a.name : (r.kind === "private" ? "" : "#") + r.label,
+             icon: a && a.app ? a.icon : "", text: m ? Md.flat(m, al.ctx, 220) : "", where: (r.kind === "private" ? "" : "#") + r.label,
+             whereIcon: r.kind === "private" ? "󰌾" : "#", emoji: "", needsMsg: !m }
+  }
+
   // Rows by day, the day's name over all but today's.
   readonly property var items: {
     if (!ws) return []
     ws.oneRev; ws.historyRev; ws.repliesRev; ws.lastRev; ws.previewRev; ws.usersRev; ws.convsRev; ws.botsRev; ws.countsRev; al.marksRev
     var out = [], lastDay = "", now = new Date()
+    function day(when) {
+      var d = U.tsDate(when), name = d.toDateString()
+      if (name === lastDay) return
+      lastDay = name
+      if (U.dayDiff(d, now) !== 0) out.push({ key: "d/" + name, header: true, label: U.dayLabel(d, al.app.lang) })
+    }
+    if (al.filter === "recent" && !al.peek) {
+      ws.recentChannels(al.unreadsOnly).forEach(function(r) { day(r.latest); out.push(al.recentRowOf(r)) })
+      return out
+    }
     al.refs.forEach(function(r) {
       var m = al.messageOf(r)
       if (m === false) return
-      var d = U.tsDate(r.when), day = d.toDateString()
-      if (day !== lastDay) {
-        lastDay = day
-        if (U.dayDiff(d, now) !== 0) out.push({ key: "d/" + day, header: true, label: U.dayLabel(d, al.app.lang) })
-      }
+      day(r.when)
       out.push(al.rowOf(r, m || null))
     })
     return out
@@ -221,7 +239,8 @@ Rectangle {
     { id: "all", icon: "󰂚", label: al.app.tr("All", "Tudo") },
     { id: "dms", icon: "󰍥", label: "DMs" },
     { id: "mentions", icon: "󰁥", label: al.app.tr("Mentions", "Menções") },
-    { id: "threads", icon: "󰍪", label: al.app.tr("Threads", "Conversas") }
+    { id: "threads", icon: "󰍪", label: al.app.tr("Threads", "Conversas") },
+    { id: "recent", icon: "󰋚", label: al.app.tr("Recent channels", "Canais recentes") }
   ]
   Row {
     id: measure
@@ -257,7 +276,8 @@ Rectangle {
           required property var modelData
           readonly property bool active: al.filter === modelData.id
           readonly property bool folded: al.compactTabs && !active
-          readonly property bool news: !!al.ws && al.ws.activityUnread(modelData.id === "all" ? null : al.typesOf[modelData.id].split(",")) > 0
+          readonly property bool news: !!al.ws && (modelData.id === "recent" ? al.ws.recentChannels(true, 1).length > 0
+                                                   : al.ws.activityUnread(modelData.id === "all" ? null : al.typesOf[modelData.id].split(",")) > 0)
           height: tabRow.height
           width: tabInner.implicitWidth + al.t.sp(16)
           Rectangle {
@@ -399,6 +419,8 @@ Rectangle {
     delegate: Item {
       id: row
       required property var modelData
+      // A recent channel's newest message, asked for once it's on screen.
+      Component.onCompleted: if (modelData.needsMsg) al.ws.fetchLast(modelData.conv)
       readonly property bool head: !!modelData.header
       readonly property bool selected: al.selectedKey === modelData.key
       readonly property bool hot: ma.containsMouse
@@ -598,7 +620,7 @@ Rectangle {
     Glyph {
       app: al.app
       anchors.horizontalCenter: parent.horizontalCenter
-      icon: al.filter === "mentions" ? "󰁥" : (al.filter === "threads" ? "󰍪" : (al.filter === "dms" ? "󰍥" : "󰂚"))
+      icon: al.filter === "mentions" ? "󰁥" : (al.filter === "threads" ? "󰍪" : (al.filter === "dms" ? "󰍥" : (al.filter === "recent" ? "󰋚" : "󰂚")))
       size: al.t.sp(30)
       color: al.t.fgDim
     }
@@ -612,7 +634,8 @@ Rectangle {
           : (al.filter === "mentions" ? al.app.tr("No mentions yet", "Nenhuma menção ainda")
           : (al.filter === "threads" ? al.app.tr("No thread activity", "Nenhuma atividade em conversas")
           : (al.filter === "dms" ? al.app.tr("No direct messages", "Nenhuma mensagem direta")
-          : al.app.tr("No activity yet", "Nenhuma atividade ainda"))))))
+          : (al.filter === "recent" ? al.app.tr("No recent channels", "Nenhum canal recente")
+          : al.app.tr("No activity yet", "Nenhuma atividade ainda")))))))
       color: al.t.fgBright
       font.family: al.t.font
       font.pixelSize: al.t.fsText
@@ -626,7 +649,8 @@ Rectangle {
       text: al.filter === "mentions" ? al.app.tr("When someone @mentions you, it shows up here.", "Quando alguém @mencionar você, aparece aqui.")
           : (al.filter === "threads" ? al.app.tr("New replies in threads you follow show up here.", "Novas respostas nas conversas que você segue aparecem aqui.")
           : (al.filter === "dms" ? al.app.tr("Messages sent to you show up here.", "Mensagens enviadas para você aparecem aqui.")
-          : al.app.tr("Mentions, DMs, thread replies and reactions to your messages show up here.", "Menções, DMs, respostas em conversas e reações às suas mensagens aparecem aqui.")))
+          : (al.filter === "recent" ? al.app.tr("Channels you haven't muted show up here, the latest message first.", "Canais que você não silenciou aparecem aqui, a mensagem mais recente primeiro.")
+          : al.app.tr("Mentions, DMs, thread replies and reactions to your messages show up here.", "Menções, DMs, respostas em conversas e reações às suas mensagens aparecem aqui."))))
       color: al.t.fgDim
       font.family: al.t.font
       font.pixelSize: al.t.fsSmall
@@ -644,11 +668,12 @@ Rectangle {
   // with it: only what's held here is used after).
   function openItem(it) {
     var w = al.win, ws = al.ws
-    if (it.unread) al.mark(it, true)
+    if (it.unread && it.type !== "recent") al.mark(it, true)
     if (al.peek) w.railTab = "activity"
     w.activityOpen = true
     w.activityKey = it.key
-    if (it.threadTs) ws.open(it.conv, { ts: it.ts, threadTs: it.threadTs })
+    if (it.type === "recent") ws.open(it.conv)
+    else if (it.threadTs) ws.open(it.conv, { ts: it.ts, threadTs: it.threadTs })
     else ws.open(it.conv, { ts: it.ts })
   }
 
@@ -658,10 +683,12 @@ Rectangle {
       { label: al.app.tr("Open", "Abrir"), icon: "󰁔", action: function() { al.openItem(it) } }
     ]
     if (it.threadTs) items.push({ label: al.app.tr("Open thread", "Abrir conversa"), icon: "󰍪", action: function() { al.openItem(it); w.openThread(it.conv, it.threadTs) } })
-    if (it.unread) items.push({ label: al.app.tr("Mark as read", "Marcar como lida"), icon: "󰄬", action: function() { al.mark(it, true) } })
+    if (it.type === "recent") {
+      if (it.unread) items.push({ label: al.app.tr("Mark as read", "Marcar como lida"), icon: "󰄬", action: function() { w.markRead(it.conv) } })
+    } else if (it.unread) items.push({ label: al.app.tr("Mark as read", "Marcar como lida"), icon: "󰄬", action: function() { al.mark(it, true) } })
     else items.push({ label: al.app.tr("Mark as unread", "Marcar como não lida"), icon: "󰇮", action: function() { al.mark(it, false) } })
-    items.push({ separator: true })
-    items.push({ label: al.app.tr("Copy link", "Copiar link"), icon: "󰌷", action: function() {
+    if (it.ts) items.push({ separator: true })
+    if (it.ts) items.push({ label: al.app.tr("Copy link", "Copiar link"), icon: "󰌷", action: function() {
       al.app.copy(w.permalink(it.conv, { ts: it.ts, threadTs: it.threadTs })); al.win.toast(al.app.tr("Link copied", "Link copiado")) } })
     al.win.menu(items, x, y)
   }

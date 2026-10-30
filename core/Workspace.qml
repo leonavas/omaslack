@@ -183,6 +183,22 @@ Item {
     return out.slice(0, max || 6)
   }
 
+  // Channels you're in and haven't muted, by their newest message (the
+  // Activity tab's Recent channels): [{conv, label, kind, unread, mentions, latest, msg}].
+  function recentChannels(unreadOnly, max) {
+    root.countsRev; root.convsRev; root.lastRev
+    var out = []
+    for (var id in root.counts) {
+      var k = root.counts[id], c = root.convs[id]
+      if (!c || !k.latest || Model.isDm(c) || c.archived || c.guest || c.member === false || root.isMuted(id)) continue
+      if (unreadOnly && !(k.unread || k.mentions > 0)) continue
+      out.push({ conv: id, label: root.convLabel(id), kind: c.kind, unread: !!k.unread || k.mentions > 0, mentions: k.mentions || 0,
+                 latest: k.latest, msg: root.lastMsgs[id] || null })
+    }
+    out.sort(function(a, b) { return U.cmpTs(b.latest, a.latest) })
+    return out.slice(0, max || 50)
+  }
+
   // The last message seen per conversation (socket or history; not the
   // cache's, which can be behind).
   property var lastMsgs: ({})

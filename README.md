@@ -18,7 +18,7 @@ Omaslack is an [Omarchy](https://omarchy.org) shell plugin written in QML (Quick
 - **Threads**: a side pane, "also send to channel", and a Threads view of the threads you follow.
 - **Ctrl+K search**: a quick switcher for conversations and people, plus Slack's message search with previews and its modifiers (`in:`, `from:`, `has:`, `before:`, `after:`). Deactivated people show up too, and opening one shows the **archives of the deactivated account** (their DM, read-only).
 - **Files**: a rail item with a hover card of recent and starred files, and a full page with All / Created by you / Shared with you, type filters, sorting, search, download and star.
-- **DMs, Activity and Later** tabs in the rail, each with a hover card, plus Drafts.
+- **DMs, Activity and Later** tabs in the rail, each with a hover card, plus Drafts. Activity has a Recent channels tab: the unmuted channels by their latest message.
 - **Message actions**: edit, delete, forward, save for later, remind, mark unread, pin, copy link, and turning reply notifications on or off for a thread.
 - **Rich content**: Block Kit, attachments, shared messages (a card with the author, the day, where it was posted and its files, opening the original on click), apps and bots with their names and pictures, inline images and an image viewer. Apps' link cards (a Jira issue, for instance) are drawn as Slack draws them, with their fields, buttons and Refresh.
 - **Channels**: details (topic, description, members, notifications), channel managers, removing members, rename, archive, convert, delete, invite, browse channels, and new channel or new message.
