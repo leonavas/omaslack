@@ -11,7 +11,7 @@ JSON lines:
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
 Ops: creds, call, download, video_frame, stream, post_file, multipart, read_cookie, write_private,
-secret_store, secret_lookup, secret_clear, ws_open, ws_send, ws_close. Socket
+secret_store, secret_lookup, secret_clear, sweep, ws_open, ws_send, ws_close. Socket
 traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
 Credentials only ever arrive on stdin and only ever go to slack.com hosts.
@@ -28,6 +28,7 @@ import shutil
 import socket
 import sqlite3
 import ssl
+import stat
 import struct
 import subprocess
 import sys
@@ -174,6 +175,37 @@ def request(method, url, body=None, headers=None, stream_to=None, progress=None,
     raise OSError("unreachable")
 
 
+class Later:
+    """An op's answer that isn't in yet: it runs again in `wait` seconds,
+    off its pool meanwhile (a 429's Retry-After never holds a worker)."""
+
+    def __init__(self, wait):
+        self.wait = wait
+
+
+def pick_tree(paths):
+    """["id", "profile.image_72"] → {"id": True, "profile": {"image_72": True}};
+    a whole key wins over any of its parts."""
+    tree = {}
+    for path in paths:
+        node = tree
+        keys = str(path).split(".")
+        for k in keys[:-1]:
+            sub = node.get(k)
+            if sub is True:
+                break
+            node = node.setdefault(k, {})
+        else:
+            node[keys[-1]] = True
+    return tree
+
+
+def project(obj, tree):
+    if not isinstance(obj, dict):
+        return obj
+    return {k: (obj[k] if sub is True else project(obj[k], sub)) for k, sub in tree.items() if k in obj}
+
+
 def op_call(msg):
     method = msg.get("method", "")
     params = dict(msg.get("params") or {})
@@ -192,34 +224,60 @@ def op_call(msg):
     url = "https://%s/api/%s" % (API_HOST, method)
     headers = auth_headers()
     headers["Content-Type"] = "application/x-www-form-urlencoded"
-    net_tries = 0
-    for _ in range(8):
+    # Eight tries at most, three of them network failures; each wait is a
+    # Later, so the next try starts over from here.
+    tries = msg["_tries"] = msg.get("_tries", 0) + 1
+    try:
+        status, rh, data = request("POST", url, body, headers)
+    except Exception as e:
+        net = msg["_net"] = msg.get("_net", 0) + 1
+        if net >= 3:
+            return {"ok": False, "error": "network: %s" % e}
+        return Later(1.5 * net) if tries < 8 else {"ok": False, "error": "ratelimited"}
+    if status == 429:
+        if tries >= 8:
+            return {"ok": False, "error": "ratelimited"}
         try:
-            status, rh, data = request("POST", url, body, headers)
-        except Exception as e:
-            net_tries += 1
-            if net_tries >= 3:
-                return {"ok": False, "error": "network: %s" % e}
-            time.sleep(1.5 * net_tries)
-            continue
-        if status == 429:
-            try:
-                wait = int(rh.get("retry-after", "2"))
-            except ValueError:
-                wait = 2
-            time.sleep(min(30, max(1, wait)))
-            continue
-        try:
-            parsed = json.loads(data.decode("utf-8", "replace") or "null")
+            wait = int(rh.get("retry-after", "2"))
         except ValueError:
-            return {"ok": False, "status": status, "error": "http %d" % status}
-        return {"ok": True, "status": status, "body": parsed}
-    return {"ok": False, "error": "ratelimited"}
+            wait = 2
+        return Later(min(30, max(1, wait)))
+    try:
+        parsed = json.loads(data.decode("utf-8", "replace") or "null")
+    except ValueError:
+        return {"ok": False, "status": status, "error": "http %d" % status}
+    # `pick`: {"members": ["id", "profile.image_72", …]}: that list's items
+    # cut down to those fields (when there), so QML parses only what it reads.
+    pick = msg.get("pick")
+    if pick and isinstance(parsed, dict):
+        for key, paths in pick.items():
+            items = parsed.get(key)
+            if isinstance(items, list) and paths:
+                tree = pick_tree(paths)
+                parsed[key] = [project(it, tree) for it in items]
+    return {"ok": True, "status": status, "body": parsed}
+
+
+# Files of the cache this process handed out (QML shows them from disk) or
+# is writing: the sweep never deletes them, and keeps them fresh.
+held = set()
+held_lock = threading.Lock()
+
+
+def hold(path):
+    with held_lock:
+        held.add(os.path.realpath(path))
+
+
+def release(path):
+    with held_lock:
+        held.discard(os.path.realpath(path))
 
 
 def op_download(msg):
     url = msg["url"]
     dest = msg["dest"]
+    cache = not msg.get("no_clobber")
     # `reuse`: a file already in the cache is used again, and its
     # modification time becomes its last use, so what keeps being looked at
     # never expires (the plugin deletes what's a week unseen).
@@ -227,6 +285,7 @@ def op_download(msg):
         try:
             if os.path.getsize(dest) > 0:
                 os.utime(dest)
+                hold(dest)
                 return {"ok": True, "path": dest, "mime": "", "cached": True}
         except OSError:
             pass
@@ -246,11 +305,14 @@ def op_download(msg):
         u = urllib.parse.urlsplit(url)
         headers = auth_headers() if is_slack(u.hostname) else {}
         tmp = dest + ".part"
+        hold(tmp)
         try:
             with open(tmp, "wb") as f:
                 status, rh, data = request("GET", url, None, headers, stream_to=f, progress=report)
         except Exception as e:
+            release(tmp)
             return {"ok": False, "error": str(e)}
+        release(tmp)
         if status in (301, 302, 303, 307, 308) and rh.get("location"):
             url = urllib.parse.urljoin(url, rh["location"])
             continue
@@ -266,9 +328,11 @@ def op_download(msg):
             return {"ok": False, "error": "html"}
         # `no_clobber` (a save to Downloads): a file already there stays, and
         # this one becomes "name (1).ext", "name (2).ext"…
-        if msg.get("no_clobber"):
+        if not cache:
             dest = free_name(dest)
         os.replace(tmp, dest)
+        if cache:
+            hold(dest)
         return {"ok": True, "path": dest, "mime": mime}
     return {"ok": False, "error": "redirects"}
 
@@ -324,6 +388,7 @@ def op_video_frame(msg):
     try:
         if os.path.getsize(dest) > 0:
             os.utime(dest)
+            hold(dest)
             return {"ok": True, "path": dest, "cached": True}
     except OSError:
         pass
@@ -354,6 +419,7 @@ def op_video_frame(msg):
                                capture_output=True, timeout=40)
             if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
                 os.replace(tmp, dest)
+                hold(dest)
                 return {"ok": True, "path": dest}
         return {"ok": False, "error": "no frame"}
     finally:
@@ -640,11 +706,87 @@ def op_secret_clear(msg):
     return {"ok": p.returncode == 0}
 
 
+# A file written less than this ago (another workspace's, on its way or
+# just shown) is never the one that goes for the size cap.
+SWEEP_GRACE = 3600
+
+
+def under(path, base):
+    return os.path.commonpath([base, path]) == base
+
+
+def op_sweep(msg):
+    """The cache's files: those of `dirs` unused for `days` go (their
+    modification time is their last use), then, while `cap_dir` holds more
+    than `cap` bytes, its least recently used. Only ever under the plugin's
+    cache dir; never one this process holds or a `.part` on its way."""
+    base = os.path.realpath(xdg_dir("XDG_CACHE_HOME", ".cache"))
+    roots = [os.path.realpath(d) for d in msg.get("dirs") or [] if d]
+    cap_dir = os.path.realpath(msg["cap_dir"]) if msg.get("cap_dir") else ""
+    cap = int(msg.get("cap") or 0)
+    if cap_dir and not any(under(cap_dir, r) for r in roots):
+        roots.append(cap_dir)
+    if any(r == base or not under(r, base) for r in roots):
+        return {"ok": False, "error": "not the cache"}
+    roots = [r for r in roots if not any(o != r and under(r, o) for o in roots)]
+    now = time.time()
+    old = now - float(msg.get("days") or 7) * 86400
+    with held_lock:
+        busy = set(held)
+    # In use here: fresh for every workspace's sweep (they share the dir).
+    for p in busy:
+        if any(under(p, r) for r in roots):
+            try:
+                os.utime(p)
+            except OSError:
+                pass
+    gone = freed = total = 0
+    left = []
+    for r in roots:
+        for d, _, names in os.walk(r):
+            for name in names:
+                p = os.path.join(d, name)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                if p not in busy and st.st_mtime < old:
+                    try:
+                        os.unlink(p)
+                        gone += 1
+                        freed += st.st_size
+                    except OSError:
+                        pass
+                    continue
+                if cap_dir and under(p, cap_dir):
+                    total += st.st_size
+                    if p not in busy and not name.endswith((".part", ".part.jpg")) and st.st_mtime < now - SWEEP_GRACE:
+                        left.append((st.st_mtime, st.st_size, p))
+    if cap and total > cap:
+        left.sort()
+        for _, size, p in left:
+            if total <= cap:
+                break
+            try:
+                os.unlink(p)
+            except OSError:
+                continue
+            gone += 1
+            freed += size
+            total -= size
+    return {"ok": True, "deleted": gone, "freed": freed, "size": total}
+
+
 class Socket:
     """A WebSocket client, RFC 6455, just what Slack's socket needs."""
 
-    def __init__(self, url):
+    def __init__(self, url, quiet=None):
         self.url = url
+        # Event types QML has no use for, dropped here (with untyped
+        # replies) instead of parsed again on its GUI thread; None: all go.
+        self.quiet = set(quiet) if quiet is not None else None
         self.sock = None
         self.wlock = threading.Lock()
         self.alive = False
@@ -769,6 +911,10 @@ class Socket:
                         data = json.loads(text)
                     except ValueError:
                         continue
+                    if self.quiet is not None:
+                        kind = data.get("type") if isinstance(data, dict) else None
+                        if not kind or not isinstance(kind, str) or kind in self.quiet:
+                            continue
                     emit({"ws": "msg", "data": data})
         except Exception as e:
             reason = str(e) or "error"
@@ -811,7 +957,8 @@ def op_ws_open(msg):
         old = ws["cur"]
         if old:
             old.close()
-        s = Socket(msg["url"])
+        quiet = msg.get("quiet")
+        s = Socket(msg["url"], quiet if isinstance(quiet, list) else None)
         ws["cur"] = s
     try:
         s.connect()
@@ -854,7 +1001,12 @@ OPS = {
     "secret_store": op_secret_store,
     "secret_lookup": op_secret_lookup,
     "secret_clear": op_secret_clear,
+    "sweep": op_sweep,
 }
+
+# Each op's pool: Web API calls never wait behind files on their way (a
+# long download, ffmpeg) nor behind the keyring asking for its password.
+POOL_OF = {"call": "api", "download": "files", "video_frame": "files", "stream": "files", "post_file": "files", "multipart": "files"}
 
 
 def run(pool, msg):
@@ -866,6 +1018,11 @@ def run(pool, msg):
             res = OPS[op](msg)
         except Exception as e:
             res = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+        if isinstance(res, Later):
+            t = threading.Timer(res.wait, pool.submit, (work,))
+            t.daemon = True
+            t.start()
+            return
         res["id"] = rid
         emit(res)
 
@@ -873,7 +1030,8 @@ def run(pool, msg):
 
 
 def main():
-    pool = ThreadPoolExecutor(max_workers=6)
+    pools = {"api": ThreadPoolExecutor(max_workers=6), "files": ThreadPoolExecutor(max_workers=6),
+             "misc": ThreadPoolExecutor(max_workers=2)}
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -901,7 +1059,7 @@ def main():
             res["id"] = msg.get("id")
             emit(res)
         elif op in OPS:
-            run(pool, msg)
+            run(pools[POOL_OF.get(op, "misc")], msg)
     op_ws_close({})
     os._exit(0)
 

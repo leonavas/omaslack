@@ -18,6 +18,17 @@ Rectangle {
   readonly property var t: app.theme
   color: t.sidebar
 
+  // Off screen (Service.onScreen) the rows stay as they were: the list and
+  // its pills don't follow events nobody sees, and catch up once it shows.
+  property var rows: []
+  Binding {
+    target: side
+    property: "rows"
+    when: side.app.onScreen
+    value: side.ws ? side.ws.sidebarRows : []
+    restoreMode: Binding.RestoreNone
+  }
+
   // ---------------------------------------------------------------- header
   Item {
     id: header
@@ -91,7 +102,7 @@ Rectangle {
     bottomMargin: side.t.sp(12)
     boundsBehavior: Flickable.StopAtBounds
     reuseItems: false
-    model: ScriptModel { values: side.ws ? side.ws.sidebarRows : []; objectProp: "key" }
+    model: ScriptModel { values: side.rows; objectProp: "key" }
     ScrollBar.vertical: ThinScroll { app: side.app }
 
     delegate: SidebarRow {
@@ -107,7 +118,7 @@ Rectangle {
     }
 
     // The wheel / touchpad (further than Qt's) takes over from a pill's glide.
-    WheelScroll { view: list; step: side.t.sp(130); onWheeled: glide.stop() }
+    WheelScroll { view: list; step: side.t.sp(118); touch: 1.8; onWheeled: glide.stop() }
   }
 
   Glide { id: glide; view: list }
@@ -121,7 +132,7 @@ Rectangle {
   readonly property var dropRow: {
     if (!side.dragRow) return null
     var idx = list.indexAt(10, side.dragY - list.y + list.contentY)
-    var rows = side.ws ? side.ws.sidebarRows : []
+    var rows = side.rows
     var r = idx >= 0 ? rows[idx] : null
     if (!r) return null
     return r
@@ -182,9 +193,8 @@ Rectangle {
 
   // Unread rows out of sight: Slack's "Unread mentions" pill.
   readonly property var pills: {
-    side.ws ? side.ws.sidebarRows : null
     list.contentY; list.height
-    var rows = side.ws ? side.ws.sidebarRows : []
+    var rows = side.rows
     var first = list.indexAt(10, list.contentY + 4)
     var last = list.indexAt(10, list.contentY + list.height - 4)
     if (first < 0) first = 0
@@ -201,11 +211,11 @@ Rectangle {
 
   // A pill glides to the row (found by key on each step: rows come and go).
   function reveal(i, mode) {
-    var rows = side.ws ? side.ws.sidebarRows : []
+    var rows = side.rows
     var key = rows[i] ? rows[i].key : ""
     if (!key) return
     glide.to(function() {
-      var rs = side.ws ? side.ws.sidebarRows : []
+      var rs = side.rows
       for (var j = 0; j < rs.length; j++) if (rs[j].key === key) { list.positionViewAtIndex(j, mode); return }
     })
   }

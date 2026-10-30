@@ -26,7 +26,14 @@ Rectangle {
   property string query: ""
   color: t.sidebar
 
+  // Off screen (Service.onScreen) the list stays as it was, not rebuilt on
+  // every event nobody sees, and catches up at once when it shows.
+  readonly property bool live: app.onScreen
+  property var shownRows: []
+  onRowsChanged: if (dl.live) dl.shownRows = dl.rows
+  Component.onCompleted: dl.shownRows = dl.rows
   readonly property var rows: {
+    if (!dl.live) return dl.shownRows
     if (!ws) return []
     ws.convsRev; ws.countsRev; ws.usersRev
     var me = ws.me.id
@@ -172,7 +179,9 @@ Rectangle {
       required property var modelData
       readonly property bool selected: dl.ws.view === "conv" && dl.ws.current === modelData.id
       readonly property bool hot: ma.containsMouse
-      readonly property var last: { dl.ws.lastRev; return dl.ws.lastMsgs[modelData.id] || null }
+      readonly property var last: { if (!dl.live) return row.shownLast; dl.ws.lastRev; return dl.ws.lastMsgs[modelData.id] || null }
+      property var shownLast: null
+      onLastChanged: if (dl.live) row.shownLast = row.last
       readonly property color ink: selected ? dl.t.rowSelectedText : (modelData.unread ? dl.t.fgBright : dl.t.fg)
       readonly property color soft: selected ? dl.t.alpha(dl.t.rowSelectedText, 0.8) : (modelData.unread ? dl.t.fg : dl.t.fgDim)
       // The row's fill, and the color it makes over the list: the photos'
@@ -182,7 +191,7 @@ Rectangle {
       width: list.width
       height: dl.narrow ? dl.t.sp(52) : dl.t.sp(66)
 
-      Component.onCompleted: dl.ws.fetchLast(modelData.id)
+      Component.onCompleted: { row.shownLast = row.last; dl.ws.fetchLast(modelData.id) }
 
       Rectangle {
         x: dl.t.sp(8)

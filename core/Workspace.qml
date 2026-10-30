@@ -126,10 +126,15 @@ Item {
                              threads: root.threads })
   }
 
+  // Off screen it keeps the last rows and reads no rev, so events don't
+  // rebuild a sidebar nobody sees; it catches up when the window is back.
+  // (A holder, not a property: keeping the rows notifies nothing.)
+  readonly property var _sidebarLast: ({ rows: null })
   readonly property var sidebarRows: {
+    if (root.app && !root.app.onScreen && root._sidebarLast.rows) return root._sidebarLast.rows
     root.countsRev; root.convsRev; root.usersRev; root.sectionsRev; root.collapsedRev; root.draftsRev
     var rules = root.sidebarRules
-    return Model.sidebar({
+    return root._sidebarLast.rows = Model.sidebar({
       lang: root.lang, me: root.me.id, convs: root.convs, users: root.users, handles: root.handles, counts: root.counts,
       sections: root.sections, stars: root.stars, openIms: root.openIms, prefs: root.prefsLoaded ? root.prefs : {},
       current: root.current, view: root.view, collapsed: root.collapsed, drafts: root.drafts,
@@ -242,7 +247,7 @@ Item {
     "users.channelSections.list", "stars.list", "users.priority.list", "client.counts", "client.userBoot", "client.getWebSocketURL",
     "rtm.connect", "emoji.list", "commands.list", "users.prefs.get", "dnd.info", "dnd.teamInfo", "saved.list", "conversations.history",
     "conversations.replies", "conversations.info", "conversations.members", "conversations.list", "pins.list", "reactions.get",
-    "search.messages", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list", "admin.roles.entity.listAssignments"]
+    "search.messages", "search.inline", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list", "admin.roles.entity.listAssignments"]
 
   function api(method, params, ok, fail) {
     if (root.readOnlyMode && root.readMethods.indexOf(method) < 0) {
@@ -564,14 +569,29 @@ Item {
 
   Timer { id: retryStart; interval: 15000; onTriggered: root.start() }
 
+  // What Model.parseUser reads of a user: users.list's members come with
+  // only these (transport.py's pick). One it starts to read goes here too.
+  readonly property var userFields: ["id", "name", "is_bot", "deleted", "tz_offset", "tz_label", "tz", "is_restricted", "is_ultra_restricted", "is_admin",
+    "profile.display_name", "profile.real_name", "profile.bot_id", "profile.api_app_id", "profile.image_72", "profile.image_192",
+    "profile.image_512", "profile.image_1024", "profile.image_original", "profile.title", "profile.email", "profile.phone",
+    "profile.status_emoji", "profile.status_text", "profile.status_expiration", "profile.status_emoji_display_info"]
+
+  // The whole list at start, hourly and on a socket back up (at most every
+  // 10 minutes): in between, the socket's user_change and team_join keep it.
+  property real _usersAt: 0           // the last full pass, started
+  property bool _usersLoading: false
   function loadUsers() {
+    if (root._usersLoading) return
+    root._usersLoading = true
+    root._usersAt = Date.now()
     // Page by page only the first time (nobody known yet); else once, at the end.
     var first = Object.keys(root.users).length === 0
-    root.paginate("users.list", { limit: 200 }, "members", function() {
+    root.paginate("users.list", { limit: 200, _pick: { members: root.userFields } }, "members", function() {
+      root._usersLoading = false
       root.usersRev++
       root.booted = root.booted || Object.keys(root.convs).length > 0
       cacheTimer.restart()
-    }, function() {}, function(items) {
+    }, function() { root._usersLoading = false }, function(items) {
       for (var i = 0; i < items.length; i++) root.applyUser(items[i])
       if (first) root.bump("usersRev")
     })
@@ -950,7 +970,8 @@ Item {
   function loadDirectory(force) {
     if (!force && root.directory.at && Date.now() / 1000 - root.directory.at < 6 * 3600) return
     var chans = []
-    root.paginate("conversations.list", { types: "public_channel", exclude_archived: false, limit: 1000 }, "channels", function() {
+    var pick = { channels: ["id", "name", "is_archived", "num_members", "updated", "created", "purpose.value"] }
+    root.paginate("conversations.list", { types: "public_channel", exclude_archived: false, limit: 1000, _pick: pick }, "channels", function() {
       chans.sort(function(a, b) { return a.name < b.name ? -1 : 1 })
       root.directory = { at: Math.floor(Date.now() / 1000), chans: chans }
       root.directoryRev++
@@ -961,6 +982,16 @@ Item {
   }
 
   Timer { id: directoryTimer; interval: 5000; onTriggered: root.loadDirectory(false) }
+
+  // The cache's files, at the start and once a day: a week unused and they
+  // go, and past 500 MB the least recently used (transport.py's sweep).
+  Timer {
+    interval: 24 * 3600 * 1000
+    running: !root.account.demo
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: wire.sweep([root.cacheDir + "/files", root.cacheDir + "/paste"], root.cacheDir + "/files", 500 * 1024 * 1024, 7)
+  }
 
   // ---------------------------------------------------------------- socket
   property int _backoff: 2000
@@ -1011,6 +1042,8 @@ Item {
     root.loadPrefs()
     root.loadEmojiUse()
     root.refreshOpen()
+    // Back up after a while: the people's changes meanwhile were missed.
+    if (root._usersAt && Date.now() - root._usersAt > 600000) root.loadUsers()
   }
 
   function onSocketDown(reason) {
@@ -1420,6 +1453,7 @@ Item {
         delete root.replies[key]
         if (root.thread && root.thread.conv === chan && root.thread.ts === ts) root.thread = null
         root.repliesRev++
+        root.repliesUpdated(key)
         continue
       }
       var r = root.replies[key]
@@ -1432,6 +1466,48 @@ Item {
     root.histories[conv] = h
     root.historyRev++
     root.historyUpdated(conv)
+  }
+
+  // What stays loaded: the `hotRecents` conversations opened last whole,
+  // the rest of `recents` down to their newest page (older pages load
+  // again), others dropped. Never the one open, the open thread's, one
+  // loading or one with a send on its way (or an answer only you saw).
+  readonly property int hotRecents: 10
+  function trimHistories() {
+    var rank = {}
+    root.recents.forEach(function(x, i) { rank[x] = i })
+    for (var conv in root.histories) {
+      if (conv === root.current || (root.thread && root.thread.conv === conv)) continue
+      var h = root.histories[conv]
+      if (h.loading || h.msgs.some(function(m) { return m.pending || m.ephemeral })) continue
+      if (rank[conv] === undefined) {
+        delete root.histories[conv]
+        delete root.fromCache[conv]
+        root.historyRev++
+        root.historyUpdated(conv)
+      } else if (rank[conv] >= root.hotRecents && h.msgs.length > root.pageSize) {
+        root.setHistory(conv, { msgs: h.msgs.slice(-root.pageSize), noOlder: false, loading: false, detached: h.detached })
+      }
+    }
+  }
+
+  // The threads' replies: the last `maxThreads` read stay (and the open
+  // one, one loading or with a send on its way).
+  readonly property int maxThreads: 20
+  property var _threadsUsed: []       // "conv/ts", least recent first
+  function touchReplies(key) {
+    var used = root._threadsUsed.filter(function(k) { return k !== key && !!root.replies[k] })
+    used.push(key)
+    var open = root.thread ? root.thread.conv + "/" + root.thread.ts : ""
+    for (var i = 0; used.length > root.maxThreads && i < used.length - 1; ) {
+      var k = used[i], r = root.replies[k]
+      if (k === open || r.loading || r.msgs.some(function(m) { return m.pending || m.ephemeral })) { i++; continue }
+      used.splice(i, 1)
+      delete root.replies[k]
+      root.repliesRev++
+      root.repliesUpdated(k)
+    }
+    root._threadsUsed = used
   }
 
   // ---------------------------------------------------------------- notify
@@ -1530,7 +1606,7 @@ Item {
   }
 
   Timer {
-    interval: 600000
+    interval: 3600000
     running: root.booted
     repeat: true
     onTriggered: root.loadUsers()
@@ -1672,6 +1748,7 @@ Item {
       root.recents = [convId].concat(root.recents.filter(function(x) { return x !== convId })).slice(0, root.maxRecents)
       cacheTimer.restart()
     }
+    root.trimHistories()
     if (root.app) root.app.rememberConv(root.teamId, convId)
   }
 
@@ -1761,8 +1838,7 @@ Item {
     root.api("conversations.history", { channel: conv, limit: root.pageSize, latest: h.msgs[0].ts }, function(b) {
       var page = (b.messages || []).map(Model.parseMessage).reverse()
       var cur = root.histories[conv]
-      var msgs = cur.msgs
-      for (var i = 0; i < page.length; i++) if (Model.indexOfTs(msgs, page[i].ts) < 0) msgs = Model.upsert(msgs, page[i])
+      var msgs = Model.upsertMany(cur.msgs, page, true)
       root.setHistory(conv, { msgs: msgs, noOlder: page.length < root.pageSize && b.has_more !== true, loading: false, detached: cur.detached })
     }, function() {
       var cur = root.histories[conv]
@@ -1805,8 +1881,7 @@ Item {
       var page = (b.messages || []).map(Model.parseMessage)
       page.sort(function(a, c) { return U.cmpTs(a.ts, c.ts) })
       var cur = root.histories[conv]
-      var msgs = cur.msgs
-      page.forEach(function(m) { msgs = Model.upsert(msgs, m) })
+      var msgs = Model.upsertMany(cur.msgs, page, false)
       root.setHistory(conv, { msgs: msgs, noOlder: cur.noOlder, loading: false, detached: page.length >= root.pageSize })
     }, function() {
       var cur = root.histories[conv]
@@ -1837,6 +1912,8 @@ Item {
     if (cur && cur.loading) return
     root.replies[key] = { msgs: cur ? cur.msgs : [], loading: true }
     root.repliesRev++
+    root.repliesUpdated(key)
+    root.touchReplies(key)
     var all = []
     function page(cursor) {
       var p = { channel: conv, ts: ts, limit: 200 }
@@ -1869,6 +1946,7 @@ Item {
         var o = root.replies[key]
         root.replies[key] = { msgs: o ? o.msgs : [], loading: false }
         root.repliesRev++
+        root.repliesUpdated(key)
       })
     }
     page("")
@@ -1965,6 +2043,7 @@ Item {
     var before = U.tsBefore(ts)
     root.newLines[conv] = before
     root.historyRev++
+    root.historyUpdated(conv)
     root.api("conversations.mark", { channel: conv, ts: before }, function() {
       root.say(root.tr("Marked unread", "Marcada como não lida"))
       countsSoon.restart()
@@ -2280,7 +2359,7 @@ Item {
   function downloadState(url) { root.downloadsRev; return root.downloads[url] || null }
   function fetchFile(url, name, cb, track) {
     if (!url) return ""
-    if (root.localFiles[url]) return root.localFiles[url]
+    if (root.localFiles[url]) { root.keepLocal(url, root.localFiles[url]); return root.localFiles[url] }
     var waiting = root._fetching[url]
     if (waiting) { if (cb) waiting.push(cb); return "" }
     root._fetching[url] = cb ? [cb] : []
@@ -2292,7 +2371,7 @@ Item {
       var cbs = root._fetching[url] || []
       delete root._fetching[url]
       if (root.downloads[url]) { delete root.downloads[url]; root.downloadsRev++ }
-      if (r.ok) { root.localFiles[url] = r.path; root.filesRev++ }
+      if (r.ok) { root.keepLocal(url, r.path); root.filesRev++ }
       for (var i = 0; i < cbs.length; i++) {
         try { cbs[i](r.ok ? r.path : "") } catch (e) { console.warn("omaslack: fetchFile callback failed:", e) }
       }
@@ -2302,6 +2381,25 @@ Item {
       root.downloadsRev++
     } : null)
     return ""
+  }
+
+  // The last `maxLocal` files had stay known (one dropped only costs a
+  // check: the download finds the file there). Without a filesRev move:
+  // the next one's brings the views along.
+  readonly property int maxLocal: 1000
+  property int _localCount: 0
+  function keepLocal(key, path) {
+    if (root.localFiles[key] !== undefined) { delete root.localFiles[key]; root._localCount-- }
+    if (root._localCount >= root.maxLocal) {
+      var drop = root.maxLocal / 5
+      for (var k in root.localFiles) {
+        if (drop-- <= 0) break
+        delete root.localFiles[k]
+        root._localCount--
+      }
+    }
+    root.localFiles[key] = path
+    root._localCount++
   }
 
   // A video's cover: a frame of its first second, blurred (Slack's own
@@ -2318,7 +2416,7 @@ Item {
     var dest = root.cacheDir + "/files/" + root.teamId + "/" + Qt.md5(url).slice(0, 16) + "-" + (f.id || "video") + "-cover.jpg"
     wire.videoFrame(url, dest, function(r) {
       delete root._covering[url]
-      root.localFiles[key] = r.ok ? r.path : ""
+      root.keepLocal(key, r.ok ? r.path : "")
       root.filesRev++
       if (cb) cb(r.ok ? r.path : "")
     })
@@ -2756,6 +2854,7 @@ Item {
     root.convsRev++
     root.countsRev++
     root.historyRev++
+    root.historyUpdated(conv)
     if (root.current === conv) { root.current = ""; root.openDefault() }
   }
 
@@ -3169,6 +3268,53 @@ Item {
     }, function(err) { cb({ hits: [], pages: 0, total: 0, error: root.errorText(err) }) })
   }
 
+  // The web client's prefix search over a conversation's recent messages
+  // (search.inline, its "Recent messages with …"): "gab" finds Gabriel,
+  // accents aside, every word a prefix; only the last days. It answers
+  // with references; the messages come from what's loaded, else one
+  // conversations.history over the hits' span, else one by one.
+  // cb({hits, total, error}), hits as searchMessages has them, newest first.
+  function searchInline(conv, query, cb) {
+    root.api("search.inline", { query: query, channel: conv, count: 20, page: 1 }, function(b) {
+      var refs = (b.items || []).filter(function(it) { return it.ts }).map(function(it) {
+        var ts = String(it.ts), t = (it.permalink || "").match(/thread_ts=([0-9.]+)/)
+        return { ts: ts, threadTs: t && t[1] !== ts ? t[1] : "", permalink: it.permalink || "" }
+      })
+      var total = Math.max((b.pagination || {}).total_count || 0, refs.length)
+      var got = {}
+      function keep(m) { if (m && !m.tombstone) got[m.ts] = m }
+      function find(list, ts) { if (list) for (var i = list.length - 1; i >= 0; i--) if (list[i].ts === ts) return list[i]; return null }
+      refs.forEach(function(r) {
+        var h = root.histories[conv], rp = r.threadTs ? root.replies[conv + "/" + r.threadTs] : null, one = root.oneMsgs[conv + "/" + r.ts]
+        keep(find(r.threadTs ? rp && rp.msgs : h && h.msgs, r.ts) || (one ? one : null))
+      })
+      function done() {
+        var c = root.convs[conv] || {}
+        cb({ total: total, hits: refs.filter(function(r) { return got[r.ts] }).map(function(r) {
+          var m = got[r.ts]
+          return { ts: r.ts, user: m.user || "", username: "", text: m.text || "", files: m.files || [], attachments: m.attachments || [],
+                   conv: conv, convName: c.name || "", convKind: c.kind || "channel", threadTs: r.threadTs, permalink: r.permalink,
+                   botName: m.botName || "", botIcon: m.botIcon || "", botEmoji: m.botEmoji || "", botId: m.botId || "" }
+        }) })
+      }
+      // What's left one by one: replies, and what the span's page missed.
+      function rest() {
+        var left = refs.filter(function(r) { return !got[r.ts] })
+        if (!left.length) { done(); return }
+        var n = left.length
+        left.forEach(function(r) {
+          root.getOne(conv, r.ts, r.threadTs, function(m) { if (m) keep(Model.parseMessage(m)); if (--n === 0) done() })
+        })
+      }
+      var top = refs.filter(function(r) { return !got[r.ts] && !r.threadTs }).map(function(r) { return r.ts }).sort(U.cmpTs)
+      if (top.length < 2) { rest(); return }
+      root.api("conversations.history", { channel: conv, oldest: top[0], latest: top[top.length - 1], inclusive: true, limit: 200 }, function(b2) {
+        (b2.messages || []).forEach(function(m) { if (top.indexOf(m.ts) >= 0) keep(Model.parseMessage(m)) })
+        rest()
+      }, rest)
+    }, function(err) { cb({ hits: [], total: 0, error: root.errorText(err) }) })
+  }
+
   // A few messages around a hit, for the search preview.
   function context(conv, ts, threadTs, cb) {
     if (threadTs) {
@@ -3191,24 +3337,41 @@ Item {
   // Single messages, fetched one by one as Later and Activity need them:
   // conv/ts → the message, null while asked, false when it can't be had.
   // A reply comes from its thread (conversations.replies takes any ts in it).
+  // The last `maxOne` asked for stay (asking again keeps one).
   property var oneMsgs: ({})
   property int oneRev: 0
+  readonly property int maxOne: 500
+  property int _oneCount: 0
   function fetchOne(conv, ts, threadTs) {
     var key = conv + "/" + ts
-    if (root.oneMsgs[key] !== undefined) return
+    var have = root.oneMsgs[key]
+    if (have !== undefined) { delete root.oneMsgs[key]; root.oneMsgs[key] = have; return }
+    if (root._oneCount >= root.maxOne) {
+      for (var k in root.oneMsgs) {
+        if (root._oneCount < root.maxOne) break
+        if (root.oneMsgs[k] === null) continue
+        delete root.oneMsgs[k]
+        root._oneCount--
+      }
+    }
     root.oneMsgs[key] = null
-    function got(m) { root.oneMsgs[key] = m ? Model.parseMessage(m) : false; root.oneRev++ }
+    root._oneCount++
+    root.getOne(conv, ts, threadTs, function(m) { root.oneMsgs[key] = m ? Model.parseMessage(m) : false; root.oneRev++ })
+  }
+
+  // One message as Slack sends it, null when it can't be had.
+  function getOne(conv, ts, threadTs, cb) {
     function inThread(parent) {
       root.api("conversations.replies", { channel: conv, ts: parent, oldest: ts, latest: ts, inclusive: true, limit: 2 }, function(b) {
-        got((b.messages || []).filter(function(x) { return x.ts === ts })[0])
-      }, function() { got(null) })
+        cb((b.messages || []).filter(function(x) { return x.ts === ts })[0] || null)
+      }, function() { cb(null) })
     }
     if (threadTs && threadTs !== ts) { inThread(threadTs); return }
     root.api("conversations.history", { channel: conv, latest: ts, inclusive: true, limit: 1 }, function(b) {
       var m = (b.messages || [])[0]
-      if (m && m.ts === ts) got(m)
+      if (m && m.ts === ts) cb(m)
       else inThread(ts)
-    }, function() { got(null) })
+    }, function() { cb(null) })
   }
 
   // The Activity feed (activity.feed, the web client's own): one page of
@@ -3280,6 +3443,14 @@ Item {
     root.reactionRev++
   }
 
+  // A conversation read: its preview goes (asked again once it's unread).
+  function prunePreviews() {
+    for (var conv in root.unreadPreviews) {
+      var k = root.counts[conv]
+      if (!k || !(k.unread || k.mentions > 0)) delete root.unreadPreviews[conv]
+    }
+  }
+
   // A message already at hand: loaded, the last one heard, or in a preview.
   function knownMessage(conv, ts) {
     var m = root.findAny(conv, ts)
@@ -3331,7 +3502,7 @@ Item {
 
   Connections {
     target: root
-    function onCountsRevChanged() { root.pruneReactions(); root.noticeQuietNews() }
+    function onCountsRevChanged() { root.pruneReactions(); root.noticeQuietNews(); root.prunePreviews() }
     function onCurrentChanged() { root.pruneReactions() }
     function onFocusedChanged() { root.pruneReactions() }
   }
@@ -3346,22 +3517,48 @@ Item {
   // restarts and gone at logout. Without one, the cache dir.
   readonly property string runDir: root.app ? root.app.runDir
                                             : (Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/omaslack" : "")
+  // Two files: the people, conversations, emoji and directory (written
+  // only when they moved), and the recent conversations' messages.
   readonly property string cachePath: (root.runDir || root.cacheDir) + "/team-" + root.teamId + ".json"
+  readonly property string msgsPath: (root.runDir || root.cacheDir) + "/team-" + root.teamId + "-msgs.json"
 
   FileView {
     id: cacheFile
     path: root.cachePath
     blockLoading: true
     printErrors: false
+    onSaved: root.keepPrivate(path)
+  }
+  FileView {
+    id: msgsFile
+    path: root.msgsPath
+    blockLoading: true
+    printErrors: false
+    onSaved: root.keepPrivate(path)
+  }
+
+  // 0600 once written (each write replaces the file keeping its mode).
+  property var _private: ({})
+  function keepPrivate(path) {
+    if (root._private[path]) return
+    root._private[path] = true
+    Quickshell.execDetached(["chmod", "600", "--", path])
+  }
+  // Signing out deletes the first (Service.qml), this the second.
+  onSignedOutChanged: if (root.signedOut) Quickshell.execDetached(["rm", "-f", "--", root.msgsPath])
+
+  function readJson(file) {
+    var raw = ""
+    try { raw = file.text() } catch (e) { raw = "" }
+    if (!raw) return null
+    try { return JSON.parse(raw) } catch (e2) { return null }
   }
 
   function loadCache() {
-    var raw = ""
-    try { raw = cacheFile.text() } catch (e) { raw = "" }
-    if (!raw) return
-    var c
-    try { c = JSON.parse(raw) } catch (e2) { return }
-    if (!c || c.v !== 1) return
+    var c = root.readJson(cacheFile)
+    // v1: one file with the messages in it (read once, then split).
+    if (!c || (c.v !== 1 && c.v !== 2)) return
+    var m = c.v === 1 ? c : (root.readJson(msgsFile) || {})
     root.users = c.users || {}
     var h = {}
     for (var id in root.users) if (root.users[id].handle) h[root.users[id].handle] = id
@@ -3381,14 +3578,15 @@ Item {
     root.hideInactive = c.hideInactive === true
     // The latest messages of the conversations opened lately: on screen at
     // once when one opens, until the newest page replaces them.
-    root.recents = c.recents || []
-    var msgs = c.msgs || {}
+    root.recents = m.recents || []
+    var msgs = m.msgs || {}
     for (var conv in msgs) {
       if (!Array.isArray(msgs[conv]) || !msgs[conv].length) continue
       root.histories[conv] = { msgs: msgs[conv].map(function(o) { return root.unpackMessage(o) }), noOlder: false, loading: false, detached: false }
       root.fromCache[conv] = true
     }
     root.usersRev++; root.convsRev++; root.sectionsRev++; root.emojiRev++; root.directoryRev++; root.historyRev++
+    for (var hc in root.histories) root.historyUpdated(hc)
     root.booted = Object.keys(root.convs).length > 0
   }
 
@@ -3416,24 +3614,45 @@ Item {
     onTriggered: root.saveCache()
   }
 
+  // What the last save wrote: the revisions behind the first file (and
+  // when), the histories behind the second.
+  property string _savedMeta: ""
+  property real _savedMetaAt: 0
+  property var _savedHists: null
+
   function saveCache() {
     if (!root.booted || root.signedOut) return
+    if (root._revsQueued) root.flushRevs()
     var convs = {}
     for (var id in root.convs) if (!root.convs[id].guest) convs[id] = root.convs[id]
-    // The last 50 messages of each recent conversation, but
+    // Unchanged revisions: written again only every 10 minutes (for what
+    // moves without one).
+    var meta = [root.usersRev, root.convsRev, root.sectionsRev, root.emojiRev, root.directoryRev, root.botsRev, root.hideInactive,
+                JSON.stringify(root.me), JSON.stringify(root.team)].join("|")
+    if (meta !== root._savedMeta || Date.now() - root._savedMetaAt > 600000) {
+      cacheFile.setText(JSON.stringify({ v: 2, me: root.me, team: root.team, users: root.users, convs: convs, sections: root.sections,
+                                         stars: root.stars, openIms: root.openIms, emoji: root.customEmoji, aliases: root.emojiAliases,
+                                         directory: root.directory, bots: root.bots, hideInactive: root.hideInactive }))
+      root._savedMeta = meta
+      root._savedMetaAt = Date.now()
+    }
+    // The last 50 messages of the `hotRecents` latest conversations, but
     // not answers only you saw (they were for this session) nor sends still
     // on their way; a stretch away from the present (`detached`) neither.
     var recents = root.recents.filter(function(x) { return !!convs[x] })
+    var hot = recents.slice(0, root.hotRecents)
+    var hists = [recents.join(",")].concat(hot.map(function(x) { return root.histories[x] || null }))
+    var was = root._savedHists
+    if (was && was.length === hists.length && hists.every(function(x, i) { return x === was[i] })) return
     var msgs = {}
-    recents.forEach(function(x) {
+    hot.forEach(function(x) {
       var hist = root.histories[x]
       if (!hist || hist.detached) return
       var list = hist.msgs.filter(function(m) { return !m.ephemeral && !m.pending && !m.local })
       if (list.length) msgs[x] = list.slice(-50).map(function(m) { return root.packMessage(m) })
     })
-    cacheFile.setText(JSON.stringify({ v: 1, me: root.me, team: root.team, users: root.users, convs: convs, sections: root.sections,
-                                       stars: root.stars, openIms: root.openIms, emoji: root.customEmoji, aliases: root.emojiAliases,
-                                       directory: root.directory, bots: root.bots, recents: recents, msgs: msgs, hideInactive: root.hideInactive }))
+    msgsFile.setText(JSON.stringify({ v: 2, recents: recents, msgs: msgs }))
+    root._savedHists = hists
   }
 
   Component.onDestruction: if (root.booted) root.saveCache()

@@ -78,14 +78,22 @@ Rectangle {
   function reset() { al.serial++; al.refs = []; al.cursor = ""; al.pages = 0; al.loaded = false; al.error = ""; al.load(false) }
   onFilterChanged: al.reset()
   onUnreadsOnlyChanged: al.reset()
-  Component.onCompleted: al.load(false)
+  Component.onCompleted: { al.shownItems = al.items; al.load(false) }
 
   // New messages and reads move the feed: the first page again, quietly,
-  // unless more pages are showing.
-  Timer { id: live; interval: 3000; onTriggered: if (!al.loading && al.pages <= 1) al.load(false) }
+  // unless more pages are showing. Off screen (Service.onScreen) that
+  // waits, and the list stays as it was: both catch up once it shows.
+  readonly property bool live: app.onScreen
+  property bool stale: false
+  onLiveChanged: if (al.live && al.stale) { al.stale = false; al.poll() }
+  function poll() {
+    if (!al.live) { al.stale = true; return }
+    if (!al.loading && al.pages <= 1) al.load(false)
+  }
+  Timer { id: pollTimer; interval: 3000; onTriggered: al.poll() }
   Connections {
     target: al.ws
-    function onCountsRevChanged() { live.restart() }
+    function onCountsRevChanged() { if (al.live) pollTimer.restart(); else al.stale = true }
   }
 
   // One feed entry → where its message is and what it says about it.
@@ -157,7 +165,10 @@ Rectangle {
   }
 
   // Rows by day, the day's name over all but today's.
+  property var shownItems: []
+  onItemsChanged: if (al.live) al.shownItems = al.items
   readonly property var items: {
+    if (!al.live) return al.shownItems
     if (!ws) return []
     ws.oneRev; ws.historyRev; ws.repliesRev; ws.lastRev; ws.previewRev; ws.usersRev; ws.convsRev; ws.botsRev; ws.countsRev; al.marksRev
     var out = [], lastDay = "", now = new Date()

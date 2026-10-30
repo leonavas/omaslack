@@ -127,6 +127,36 @@ FloatingWindow {
     function onCurrentChanged() { if (appWin.railTab === "activity") appWin.activityOpen = true }
   }
 
+  // Off screen a while (Service.onScreen), the conversation and the side
+  // pane go, with all they hold; back on screen (or opened: Service.makeWindow)
+  // they're made again from the workspace: the conversation, its thread,
+  // the draft (the scroll back at the latest). Not while something is open
+  // over them, a download comes, or a video or a sound plays.
+  property bool asleep: false
+  function wake() { appWin.asleep = false }
+  Connections {
+    target: appWin.app
+    function onOnScreenChanged() { if (appWin.app.onScreen) appWin.wake() }
+  }
+  Timer {
+    interval: 5 * 60 * 1000
+    repeat: true
+    running: !appWin.app.onScreen && !appWin.asleep
+    onTriggered: if (!appWin.busy()) appWin.asleep = true
+  }
+  function busy() {
+    return dialogs.name !== "" || menus.shown || picker.shown || viewer.active || searchLoader.active
+           || appWin.app.saveKeys.length > 0 || appWin.playing(content.item) || appWin.playing(side.item)
+  }
+  // A MediaView playing (its `player` and `playing`), anywhere under `item`.
+  function playing(item) {
+    if (!item) return false
+    if (item.playing === true && item.player !== undefined) return true
+    var ch = item.children
+    for (var i = 0; i < ch.length; i++) if (appWin.playing(ch[i])) return true
+    return false
+  }
+
   Item {
     id: root
     anchors.fill: parent
@@ -137,7 +167,8 @@ FloatingWindow {
     readonly property bool active: Window.active
     // A window on its way into the scratchpad (a background launch) has the
     // focus for a moment: that is not you looking at it.
-    onActiveChanged: appWin.app.windowFocused = active && appWin.visible && !appWin.app.stowing
+    // Focused is on screen, whatever Hyprland says: awake.
+    onActiveChanged: { appWin.app.windowFocused = active && appWin.visible && !appWin.app.stowing; if (active) appWin.wake() }
 
     // ------------------------------------------------------------ top bar
     TopBar {
@@ -268,6 +299,7 @@ FloatingWindow {
 
           Loader {
             id: content
+            active: !appWin.asleep
             x: 0
             width: parent.width - (side.active ? side.width + 1 : 0)
             height: parent.height
@@ -281,7 +313,7 @@ FloatingWindow {
 
           Loader {
             id: side
-            active: !!appWin.ws && (appWin.ws.thread !== null || appWin.ws.profileUser !== "")
+            active: !appWin.asleep && !!appWin.ws && (appWin.ws.thread !== null || appWin.ws.profileUser !== "")
             x: parent.width - width
             // Dragged to a width (kept, leaving the conversation room), else a share.
             width: sideWidth.value > 0

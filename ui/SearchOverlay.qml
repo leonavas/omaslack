@@ -49,11 +49,14 @@ Item {
 
   function wants() { return s.query.replace(/\s/g, "").length >= 2 }
   function entry() { return s.wants() ? (s._cache[s.sort + "\n" + s.query] || null) : null }
-  function isSearching() { var e = s.entry(); return s.wants() && (msgTimer.running || !e || (e.loading && e.page === 0)) }
+  function isSearching() { var e = s.entry(), ie = s.inlineEntry(); return s.wants() && (msgTimer.running || !e || (e.loading && e.page === 0) || (!!ie && ie.loading)) }
 
   // Caches that outlive a query: message results per (sort, query), previews per result.
   property var _cache: ({})
   property var _cacheKeys: []
+  property var _icache: ({})                  // conv + words → the recent messages (searchInline)
+  property var _icacheKeys: []
+  readonly property var _scopeMemo: ({ key: null, v: null })
   property var _pc: ({})
   property var _pcKeys: []
   // The lists the query runs over, rebuilt when Slack's data changed.
@@ -349,6 +352,7 @@ Item {
   function startSearch() {
     msgTimer.stop()
     if (!s.wants() || !s.ws) return
+    s.startInline()
     var key = s.sort + "\n" + s.query
     // Results are kept; a failure is asked again next time.
     if (s._cache[key] && !s._cache[key].error) return
@@ -387,6 +391,66 @@ Item {
     })
   }
 
+  // A search inside one conversation ("in:#eng", "in:@ana", Ctrl+F) also
+  // asks Slack's prefix search over its recent messages (search.inline),
+  // shown first as the official client does: "gabri" finds Gabriel there,
+  // where search.messages wants whole words. With other modifiers, none.
+  function scopeOf(query) {
+    var w = s.ws, words = query.split(/\s+/).filter(function(x) { return x })
+    var ins = words.filter(function(x) { return /^in:/i.test(x) }), rest = words.filter(function(x) { return !/^in:/i.test(x) })
+    if (ins.length !== 1 || rest.some(function(x) { return /^[a-z]+:\S/i.test(x) || x.charAt(0) === "-" })) return null
+    var q = rest.join(" ").replace(/[*"]/g, " ").replace(/\s+/g, " ").trim()
+    if (!U.tokens(q).length) return null
+    var v = ins[0].slice(3), id = "", m = null
+    if (!v) return null
+    if ((m = v.match(/^<#([A-Z0-9]+)/))) id = m[1]
+    else if ((m = v.match(/^<@([A-Z0-9]+)/))) id = w.dmWith(m[1])
+    else if (v.charAt(0) === "@") {
+      var h = v.slice(1), fh = U.fold(h), uid = w.handles[h] || ""
+      if (!uid) for (var u in w.users) { var x = w.users[u]; if (U.fold(x.handle) === fh || U.fold(x.name) === fh) { uid = u; break } }
+      id = uid ? w.dmWith(uid) : ""
+    } else {
+      var name = v.replace(/^#/, "").toLowerCase()
+      for (var c in w.convs) if (w.convs[c].kind !== "im" && String(w.convs[c].name || "").toLowerCase() === name) { id = c; break }
+      if (!id) id = (w.directory.chans.filter(function(d) { return String(d.name || "").toLowerCase() === name })[0] || {}).id || ""
+    }
+    if (!id) return null
+    var cv = w.convs[id], label = w.convLabel(id)
+    var dm = !!cv && (cv.kind === "im" || cv.kind === "mpim")
+    return { conv: id, q: q, title: dm ? s.app.tr("Recent messages with " + label, "Mensagens recentes com " + label)
+                                       : s.app.tr("Recent messages in #" + label, "Mensagens recentes em #" + label) }
+  }
+
+  // Memoized per query (a plain object: views ask it while binding).
+  function scope() {
+    if (!s.ws) return null
+    var k = s.query + "\n" + s.ws.convsRev + "\n" + s.app.lang
+    if (s._scopeMemo.key !== k) { s._scopeMemo.key = k; s._scopeMemo.v = s.scopeOf(s.query) }
+    return s._scopeMemo.v
+  }
+
+  function inlineEntry() { var sc = s.wants() ? s.scope() : null; return sc ? (s._icache[sc.conv + "\n" + sc.q] || null) : null }
+
+  function startInline() {
+    var sc = s.scope()
+    if (!sc) return
+    var key = sc.conv + "\n" + sc.q
+    if (s._icache[key] && !s._icache[key].error) return
+    var e = { hits: [], loading: true, error: "" }
+    s._icache[key] = e
+    s._icacheKeys.push(key)
+    while (s._icacheKeys.length > 64) delete s._icache[s._icacheKeys.shift()]
+    s.msgRev++
+    var life = s.life, toks = U.tokens(sc.q)
+    s.ws.searchInline(sc.conv, sc.q, function(r) {
+      e.loading = false
+      e.error = r.error || ""
+      // No highlight from Slack here: the prefixes the words cover, lit.
+      e.hits = r.hits.map(function(h) { h.text = s.unmarkCodes(U.addMarks(h.text, toks, true)); h.inline = true; return h })
+      if (life.alive) s.msgRev++
+    })
+  }
+
   function loadMoreIfNear() {
     var e = s.entry()
     if (!e || e.loading || e.error || e.page >= e.pages || (s.tab !== "all" && s.tab !== "messages")) return
@@ -405,8 +469,8 @@ Item {
   // ---------------------------------------------------------------- rows
   function refresh(reset) {
     s.matchLocal()
-    var cached = s._cache[s.sort + "\n" + s.query]
-    if (s.wants() && (!cached || cached.error)) msgTimer.restart()
+    var cached = s._cache[s.sort + "\n" + s.query], ie = s.inlineEntry()
+    if (s.wants() && (!cached || cached.error || (s.scope() && (!ie || ie.error)))) msgTimer.restart()
     else msgTimer.stop()
     s.rebuild(reset)
   }
@@ -418,7 +482,7 @@ Item {
     var out = []
     var qk = "\n" + tab + "\n" + q
     function head(text, extra) { out.push({ key: "head:" + text + qk, kind: "head", text: text, extra: extra || "" }) }
-    function note(text, busy) { out.push({ key: "note:" + text + qk, kind: "note", text: text, busy: !!busy }) }
+    function note(text, busy, quiet) { out.push({ key: "note:" + text + qk, kind: "note", text: text, busy: !!busy, quiet: !!quiet }) }
     function more(n, to) {
       out.push({ key: "more:" + to + qk, kind: "more", tab: to,
                  text: s.app.tr("+" + n + " more", "+" + n + " outros") + "  ·  Alt+" + (s.tabs.indexOf(to) + 1) })
@@ -464,16 +528,27 @@ Item {
         else note(s.app.tr("No one matches", "Ninguém encontrado"))
       }
       if (tab === "all" || tab === "messages") {
-        var e = s.entry()
-        if (tab === "all") head(s.app.tr("Messages", "Mensagens"), e && e.done && !e.error ? String(e.total) : "")
+        var e = s.entry(), ie = s.inlineEntry(), recent = ie ? ie.hits : [], shown = {}
+        var mk = "\n" + s.sort + "\n" + q
+        // The conversation's recent messages first; Slack's search after, without them.
+        if (recent.length) {
+          head(s.scope().title, String(recent.length))
+          recent.forEach(function(h) { shown[h.conv + "/" + h.ts] = true; out.push({ key: "h:" + h.conv + "/" + h.ts + mk, kind: "hit", hit: h }) })
+        }
+        var others = e ? e.hits.filter(function(h) { return !shown[h.conv + "/" + h.ts] }) : []
+        if (tab === "all" || recent.length) head(s.app.tr("Messages", "Mensagens"), e && e.done && !e.error ? String(e.total) : "")
         if (!s.wants()) note(s.app.tr("Type two letters or more to search messages", "Digite duas letras ou mais para buscar mensagens"))
         else if (e && e.error) note(e.error)
-        else if (!e || e.hits.length === 0) {
+        else if (!e || others.length === 0) {
           if (s.isSearching()) note(s.app.tr("Searching…", "Buscando…"), true)
+          else if (recent.length && (e.loading || e.page < e.pages)) {
+            note(s.app.tr("Loading more…", "Carregando mais…"), true)
+            Qt.callLater(function() { if (s.life.alive) s.loadMoreIfNear() })
+          }
+          else if (recent.length) note(s.app.tr("Nothing else matches the whole words", "Nada mais tem as palavras inteiras"), false, true)
           else note(s.app.tr("No messages match", "Nenhuma mensagem encontrada"))
         } else {
-          var mk = "\n" + s.sort + "\n" + q
-          e.hits.forEach(function(h) { out.push({ key: "h:" + h.conv + "/" + h.ts + mk, kind: "hit", hit: h }) })
+          others.forEach(function(h) { out.push({ key: "h:" + h.conv + "/" + h.ts + mk, kind: "hit", hit: h }) })
           if (e.loading) note(s.app.tr("Loading more…", "Carregando mais…"), true)
         }
       }
@@ -594,15 +669,22 @@ Item {
 
   // A hit's text: one flowing line, matches lit, cut to start near the
   // first match when that sits far in.
+  // Marks out of what isn't text: links' targets, mentions, emoji codes, entities.
+  function unmarkCodes(text) {
+    function bare(x) { return x.replace(/[\ue000\ue001]/g, "") }
+    return String(text || "").replace(/<([^<>]*)>/g, function(all, inner) {
+      var bar = inner.indexOf("|")
+      if (bar < 0) return "<" + bare(inner) + ">"
+      return "<" + bare(inner.slice(0, bar)) + "|" + inner.slice(bar + 1) + ">"
+    }).replace(/:[^\s:]*[\ue000\ue001][^\s:]*:/g, bare).replace(/&[^\s;&]*[\ue000\ue001][^\s;&]*;/g, bare)
+  }
+
   function hitHtml(h) {
     if (!h || !s.ctx) return ""
-    var text = String(h.text || "").replace(/<([^<>]*)>/g, function(all, inner) {
-      var bar = inner.indexOf("|")
-      if (bar < 0) return "<" + inner.replace(/[\ue000\ue001]/g, "") + ">"
-      return "<" + inner.slice(0, bar).replace(/[\ue000\ue001]/g, "") + "|" + inner.slice(bar + 1) + ">"
-    }).replace(/:[^\s:]*[\ue000\ue001][^\s:]*:/g, function(code) { return code.replace(/[\ue000\ue001]/g, "") })
+    var text = s.unmarkCodes(h.text)
     var flat = Md.flat({ text: text, blocks: [], files: (h.files || []).map(function(f) { return { name: f.name || f.title || "" } }), attachments: h.attachments || [], subtype: "" }, s.ctx, 0)
-    flat = U.addMarks(flat, s.marks)
+    // The recent messages' marks are prefixes (search.inline's matching).
+    flat = U.addMarks(flat, s.marks, !!h.inline)
     var first = flat.indexOf("\ue000")
     if (first > 110) {
       var from = flat.lastIndexOf(" ", first - 40)
@@ -1043,10 +1125,10 @@ Item {
                 textFormat: Text.PlainText
                 color: s.t.fgDim
                 font.family: s.t.font
-                font.pixelSize: s.t.fsSmall + 1
+                font.pixelSize: rowItem.r.quiet ? s.t.fsSmall : s.t.fsSmall + 1
                 font.italic: true
                 wrapMode: Text.Wrap
-                opacity: rowItem.r.busy ? 0.6 + 0.4 * busyPulse.v : 1
+                opacity: rowItem.r.busy ? 0.6 + 0.4 * busyPulse.v : (rowItem.r.quiet ? 0.75 : 1)
               }
             }
           }
