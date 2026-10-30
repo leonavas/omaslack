@@ -2201,45 +2201,121 @@ Item {
 
   // Slack's files need the session; they are fetched once into the cache,
   // where a later session finds them again (transport.py's `reuse`, which
-  // also marks them as just used: a week unseen and they're deleted).
-  property var _fetching: ({})
-  function fetchFile(url, name, cb) {
+  // also marks them as just used: a week unseen and they're deleted). Asked
+  // again while on the way, the callback waits for the same fetch. `track`:
+  // its progress in `downloads` (downloadState), for a bar.
+  property var _fetching: ({})        // url → callbacks waiting for it
+  property var downloads: ({})        // url → {done, total} (bytes; total 0 when not known)
+  property int downloadsRev: 0
+  function downloadState(url) { root.downloadsRev; return root.downloads[url] || null }
+  function fetchFile(url, name, cb, track) {
     if (!url) return ""
     if (root.localFiles[url]) return root.localFiles[url]
-    if (root._fetching[url]) return ""
-    root._fetching[url] = true
+    var waiting = root._fetching[url]
+    if (waiting) { if (cb) waiting.push(cb); return "" }
+    root._fetching[url] = cb ? [cb] : []
     var safe = String(name || "file").replace(/[\/\x00-\x1f]/g, "_").slice(-80)
     var hash = Qt.md5(url).slice(0, 16)
     var dest = root.cacheDir + "/files/" + root.teamId + "/" + hash + "-" + safe
+    if (track) { root.downloads[url] = { done: 0, total: 0 }; root.downloadsRev++ }
     wire.download(url, dest, function(r) {
+      var cbs = root._fetching[url] || []
       delete root._fetching[url]
-      if (r.ok) { root.localFiles[url] = r.path; root.filesRev++; if (cb) cb(r.path) }
-      else if (cb) cb("")
-    }, false, true)
+      if (root.downloads[url]) { delete root.downloads[url]; root.downloadsRev++ }
+      if (r.ok) { root.localFiles[url] = r.path; root.filesRev++ }
+      for (var i = 0; i < cbs.length; i++) {
+        try { cbs[i](r.ok ? r.path : "") } catch (e) { console.warn("omaslack: fetchFile callback failed:", e) }
+      }
+    }, false, true, false, track ? function(done, total) {
+      if (!root._fetching[url]) return
+      root.downloads[url] = { done: done, total: total }
+      root.downloadsRev++
+    } : null)
     return ""
   }
 
+  // A video's cover: a frame of its first second, blurred (Slack's own
+  // poster is its first frame, often black), cached like the files. "" while
+  // it's made or when it can't be (no ffmpeg, say); `cb(path)` when done.
+  property var _covering: ({})
+  function videoCover(f, cb) {
+    var url = root.fileUrl(f)
+    if (!url) return ""
+    var key = "cover:" + url
+    if (root.localFiles[key] !== undefined) return root.localFiles[key]
+    if (root._covering[url]) return ""
+    root._covering[url] = true
+    var dest = root.cacheDir + "/files/" + root.teamId + "/" + Qt.md5(url).slice(0, 16) + "-" + (f.id || "video") + "-cover.jpg"
+    wire.videoFrame(url, dest, function(r) {
+      delete root._covering[url]
+      root.localFiles[key] = r.ok ? r.path : ""
+      root.filesRev++
+      if (cb) cb(r.ok ? r.path : "")
+    })
+    return ""
+  }
+
+  // A file to play as it comes (MediaView): cb(a local http URL, or "").
+  function streamUrl(f, cb) {
+    var url = root.fileUrl(f)
+    if (!url) { cb(""); return }
+    wire.stream(url, function(r) { cb(r.ok ? r.url : "") })
+  }
+
   // Into Downloads, beside what's there: a name already taken becomes
-  // "name (1).ext" (transport.py's `no_clobber`).
+  // "name (1).ext" (transport.py's `no_clobber`). Its progress on the
+  // window's downloads card (Service.saveStarted) and on the file's card
+  // (downloadState); done, the card offers its folder (showInFolder).
   function saveFile(f) {
     if (!f.download) return
+    var url = f.download
+    if (root.downloads[url]) return
     var dir = root.app ? root.app.downloadsDir : (Quickshell.env("XDG_DOWNLOAD_DIR") || (Quickshell.env("HOME") || "") + "/Downloads")
     var name = String(f.name || "").replace(/[\/\x00-\x1f]/g, "_")
     if (/^\.*$/.test(name)) name = "file"
-    root.say(root.tr("Downloading ", "Baixando ") + f.name + "…")
-    wire.download(f.download, dir + "/" + name, function(r) {
-      if (r.ok) root.say(root.tr("Saved to ", "Salvo em ") + r.path)
-      else root.say(r.error === "html" ? root.tr("Slack didn't hand over the file (session expired?)", "O Slack não entregou o arquivo (sessão expirada?)") : root.tr("Download failed: ", "Download falhou: ") + r.error)
-    }, f.mimetype === "text/html", false, true)
+    var app = root.app
+    var key = app ? app.saveStarted(f.name || name) : 0
+    root.downloads[url] = { done: 0, total: 0 }
+    root.downloadsRev++
+    wire.download(url, dir + "/" + name, function(r) {
+      if (root.downloads[url]) { delete root.downloads[url]; root.downloadsRev++ }
+      var error = r.ok ? "" : r.error === "html" ? root.tr("Slack didn't hand over the file (session expired?)", "O Slack não entregou o arquivo (sessão expirada?)") : root.tr("Download failed: ", "Download falhou: ") + r.error
+      if (app) app.saveUpdate(key, r.ok ? { state: "done", path: r.path } : { state: "failed", error: error })
+      else root.say(r.ok ? root.tr("Saved to ", "Salvo em ") + r.path : error)
+    }, f.mimetype === "text/html", false, true, function(done, total) {
+      if (!root.downloads[url]) return
+      root.downloads[url] = { done: done, total: total }
+      root.downloadsRev++
+      if (app) app.saveUpdate(key, { done: done, total: total })
+    })
   }
 
+  // The file manager at the file, selected (org.freedesktop.FileManager1,
+  // Nautilus's and others'); without one, its folder with xdg-open.
+  function showInFolder(path) {
+    Quickshell.execDetached(["sh", "-c",
+      'uri="file://$(printf %s "$1" | jq -sRr @uri | sed "s/%2F/\\//g")"\n' +
+      'gdbus call --session --dest org.freedesktop.FileManager1 --object-path /org/freedesktop/FileManager1 ' +
+      '--method org.freedesktop.FileManager1.ShowItems "[\'$uri\']" "" >/dev/null 2>&1 || exec xdg-open "${1%/*}"',
+      "omaslack-show", path])
+  }
+
+  // The file in the desktop's app: fetched first (its progress on the
+  // file's card), then opened, once however many clicks came meanwhile.
+  property var _opening: ({})         // url → true while fetching to open
+  function fileUrl(f) { return f ? (f.download || f.full || "") : "" }
   function openFile(f) {
-    var url = f.download || f.full
+    var url = root.fileUrl(f)
     if (!url) { if (f.permalink && root.app) root.app.openUrl(f.permalink); return }
     var have = root.localFiles[url]
     if (have) { Quickshell.execDetached(["touch", "-c", "--", have]); root.openLocal(have); return }
+    if (root._opening[url]) return
+    root._opening[url] = true
     root.say(root.tr("Opening ", "Abrindo ") + f.name + "…")
-    root.fetchFile(url, f.name, function(path) { if (path) root.openLocal(path); else root.say(root.tr("Couldn't open the file", "Não abriu o arquivo")) })
+    root.fetchFile(url, f.name, function(path) {
+      delete root._opening[url]
+      if (path) root.openLocal(path); else root.say(root.tr("Couldn't open the file", "Não abriu o arquivo"))
+    }, true)
   }
   // A file that would run rather than open (a script, a launcher, a
   // program, or one marked executable) shows in its folder instead.

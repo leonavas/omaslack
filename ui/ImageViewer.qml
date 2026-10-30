@@ -9,6 +9,8 @@ import "../lib/Registry.js" as Reg
 // to pan when it's bigger than the window. The original is fetched with the
 // session; the thumbnail stands in meanwhile. The top bar has the name, who
 // posted it where (when known) and open / download / copy link / close.
+// A video plays here instead (MediaView, expanded), from where the message
+// left it (the file's `startAt`, `autoPlay`).
 Item {
   id: v
   property var app: Reg.service
@@ -34,6 +36,7 @@ Item {
     v.opacity = 1
     v.started = true
     v.load()
+    v.loadMedia()
   }
   Behavior on opacity { NumberAnimation { duration: 120 } }
 
@@ -70,16 +73,24 @@ Item {
     var local = ws ? ws.localFile(thumbUrl) : ""
     return local ? "file://" + local : ""
   }
+  readonly property bool video: !!file && U.mediaKind(file) === "video" && app.canPlayMedia
+  readonly property var media: mediaLoader.item
+  // MediaView by URL: it can't compile without Qt Multimedia.
+  function loadMedia() {
+    if (!v.video) { mediaLoader.source = ""; return }
+    mediaLoader.setSource(Qt.resolvedUrl("MediaView.qml"), { app: v.app, ws: v.ws, file: v.file, expanded: true,
+                                                             startAt: v.file.startAt || 0, autoPlay: !!v.file.autoPlay })
+  }
   readonly property bool animated: !!file && (file.mimetype === "image/gif" || /\.gif($|\?)/i.test(file.name || fullUrl))
 
-  onFileChanged: if (v.started) v.load()
+  onFileChanged: if (v.started) { v.load(); v.loadMedia() }
   function load() {
     v.fetched = ""
     v.fetchFailed = false
     v.fitMode = true
     v.panX = 0
     v.panY = 0
-    if (!v.file || v.direct || !v.fullUrl || !v.ws) return
+    if (!v.file || v.video || v.direct || !v.fullUrl || !v.ws) return
     if (v.ws.localFile(v.fullUrl)) return
     var url = v.fullUrl
     v.ws.fetchFile(url, (v.file.id ? v.file.id + "-" : "") + (v.file.name || "image"), function(path) {
@@ -154,6 +165,7 @@ Item {
 
   Keys.onPressed: event => {
     var k = event.key
+    if (v.media && !event.modifiers && v.mediaKey(k)) { event.accepted = true; return }
     if (k === Qt.Key_Escape) v.close()
     else if (k === Qt.Key_Plus || k === Qt.Key_Equal) v.zoomBy(1.25)
     else if (k === Qt.Key_Minus || k === Qt.Key_Underscore) v.zoomBy(0.8)
@@ -167,6 +179,17 @@ Item {
     else if (k === Qt.Key_D && !event.modifiers) v.download()
     else return
     event.accepted = true
+  }
+
+  // A video's keys: Space / K play or pause, ← → 5 s, J L 10 s, M mute.
+  function mediaKey(k) {
+    var m = v.media
+    if (k === Qt.Key_Space || k === Qt.Key_K) m.toggle()
+    else if (k === Qt.Key_Left || k === Qt.Key_J) m.seek(m.position - (k === Qt.Key_J ? 10000 : 5000))
+    else if (k === Qt.Key_Right || k === Qt.Key_L) m.seek(m.position + (k === Qt.Key_L ? 10000 : 5000))
+    else if (k === Qt.Key_M) m.muted = !m.muted
+    else return false
+    return true
   }
 
   // ---------------------------------------------------------------- backdrop
@@ -202,7 +225,7 @@ Item {
       y: (view.height - h) / 2 + v.panY
       width: w
       height: h
-      visible: v.natW > 0
+      visible: v.natW > 0 && !v.video
 
       Image {
         id: thumbImg
@@ -245,7 +268,7 @@ Item {
   // Loading / failure, over the picture.
   Rectangle {
     readonly property bool loading: !v.fullReady && !v.fullError && v.fullUrl !== ""
-    visible: loading || v.fullError
+    visible: !v.video && (loading || v.fullError)
     anchors.horizontalCenter: view.horizontalCenter
     y: view.y + (v.natW > 0 ? Math.min(view.height - v.t.sp(8), picture.y + picture.height) - height - v.t.sp(16) : (view.height - height) / 2)
     width: stateRow.implicitWidth + v.t.sp(28)
@@ -281,6 +304,7 @@ Item {
     id: ma
     anchors.fill: parent
     anchors.topMargin: bar.height
+    enabled: !v.video
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton
     hoverEnabled: true
     cursorShape: v.pannable ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
@@ -314,8 +338,15 @@ Item {
     }
   }
 
+  // The video, over the area under the bar (its own clicks and controls).
+  Loader {
+    id: mediaLoader
+    anchors.fill: view
+  }
+
   PinchHandler {
     target: null
+    enabled: !v.video
     onScaleChanged: delta => {
       var p = v.mapToItem(view, centroid.position.x, centroid.position.y)
       v.zoomBy(delta, p.x, p.y)
@@ -379,7 +410,7 @@ Item {
       height: width
       radius: Math.max(6, v.t.radiusSmall)
       color: v.glass
-      Glyph { app: v.app; anchors.centerIn: parent; icon: "󰋩"; size: v.t.fsTitle + 2; color: v.ink }
+      Glyph { app: v.app; anchors.centerIn: parent; icon: v.video ? "󰕧" : "󰋩"; size: v.t.fsTitle + 2; color: v.ink }
     }
 
     Column {
@@ -419,6 +450,7 @@ Item {
       spacing: v.t.sp(4)
 
       Rectangle {
+        visible: !v.video
         anchors.verticalCenter: parent.verticalCenter
         width: zoomRow.implicitWidth + v.t.sp(8)
         height: v.t.sp(36)
@@ -458,7 +490,7 @@ Item {
         }
       }
 
-      Item { width: v.t.sp(8); height: 1 }
+      Item { visible: !v.video; width: v.t.sp(8); height: 1 }
 
       IconButton {
         app: v.app; color: v.ink; hoverColor: v.glass; size: v.t.sp(36); iconSize: v.t.fsIcon + 2

@@ -503,6 +503,16 @@ FloatingWindow {
       Timer { id: toastTimer; interval: 3800; onTriggered: toastBox.opacity = 0 }
     }
 
+    // Saves to Downloads: their progress, then Show in folder.
+    DownloadsCard {
+      z: 950
+      app: appWin.app
+      ws: appWin.ws
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.margins: appWin.t.sp(20)
+    }
+
     // ------------------------------------------------------------ keys
     Shortcuts {
       app: appWin.app

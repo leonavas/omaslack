@@ -34,6 +34,35 @@ Item {
   readonly property string runDir: Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") + "/omaslack" : ""
   readonly property string downloadsDir: Quickshell.env("XDG_DOWNLOAD_DIR") || home + "/Downloads"
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
+  // Videos and sounds play in the message with Qt Multimedia (qt6-multimedia),
+  // which a stock Omarchy may lack: without it they stay file cards.
+  // Saves to Downloads (Workspace.saveFile), for the window's downloads card
+  // (DownloadsCard): their keys in order, each one's state by key:
+  // {name, done, total (bytes; 0 when not known), state: running | done | failed, path, error}.
+  property var saveKeys: []
+  property var _saves: ({})
+  property int savesRev: 0
+  property int _saveSeq: 0
+  function saveState(key) { root.savesRev; return root._saves[key] || null }
+  function saveStarted(name) {
+    var key = ++root._saveSeq
+    root._saves[key] = { name: name, done: 0, total: 0, state: "running", path: "", error: "" }
+    root.saveKeys = root.saveKeys.concat([key])
+    return key
+  }
+  function saveUpdate(key, fields) {
+    if (!root._saves[key]) return
+    root._saves[key] = Object.assign({}, root._saves[key], fields)
+    root.savesRev++
+  }
+  function saveDismiss(key) {
+    delete root._saves[key]
+    root.saveKeys = root.saveKeys.filter(function(k) { return k !== key })
+  }
+  readonly property bool canPlayMedia: {
+    try { Qt.createQmlObject("import QtMultimedia\nimport QtQml\nQtObject {}", root, "omaslack-media-probe").destroy(); return true }
+    catch (e) { return false }
+  }
 
   // ---------------------------------------------------------------- settings
   property var settings: ({})

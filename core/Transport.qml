@@ -27,6 +27,7 @@ Item {
 
   property int _seq: 0
   property var _pending: ({})
+  property var _progress: ({})   // id → onProgress(done, total) of a download
   property var _queue: []
 
   function _write(obj) {
@@ -51,9 +52,18 @@ Item {
   function call(method, params, cb) { return _request({ op: "call", method: method, params: params || {} }, cb) }
   // `reuse`: a file already at `dest` is kept (and marked as just used).
   // `noClobber`: one already there stays; this one gets "name (1).ext"…
-  function download(url, dest, cb, htmlOk, reuse, noClobber) {
-    return _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse, no_clobber: !!noClobber }, cb)
+  // `onProgress(done, total)`: as it arrives (total 0 when not known).
+  function download(url, dest, cb, htmlOk, reuse, noClobber, onProgress) {
+    var id = _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse, no_clobber: !!noClobber, progress: !!onProgress }, cb)
+    if (onProgress) root._progress[id] = onProgress
+    return id
   }
+  // A video's cover (a blurred frame of its first second) into `dest`,
+  // from its start alone (transport.py's video_frame).
+  function videoFrame(url, dest, cb) { return _request({ op: "video_frame", url: url, dest: dest }, cb) }
+  // A local http URL that plays a Slack file as it comes (transport.py's
+  // stream): cb({ok, url}).
+  function stream(url, cb) { return _request({ op: "stream", url: url }, cb) }
   function postFile(url, path, cb) { return _request({ op: "post_file", url: url, path: path }, cb) }
   function multipart(method, fields, path, field, mime, cb) {
     return _request({ op: "multipart", method: method, fields: fields || {}, path: path || "", field: field || "file", mime: mime || "" }, cb)
@@ -79,6 +89,12 @@ Item {
       else if (msg.ws === "closed") { root.socketOpen = false; root.socketClosed(msg.reason || "") }
       return
     }
+    if (msg.progress !== undefined) {
+      var p = root._progress[msg.id]
+      if (p) { try { p(msg.progress, msg.total || 0) } catch (e) { console.warn("omaslack: progress failed:", e) } }
+      return
+    }
+    delete root._progress[msg.id]
     var cb = root._pending[msg.id]
     if (cb) {
       delete root._pending[msg.id]
@@ -107,6 +123,7 @@ Item {
       if (root.socketOpen) { root.socketOpen = false; root.socketClosed("transport exited") }
       var pending = root._pending
       root._pending = ({})
+      root._progress = ({})
       for (var id in pending) {
         try { pending[id]({ ok: false, error: "transport exited" }) } catch (e) {}
       }
