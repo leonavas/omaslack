@@ -3,13 +3,15 @@
 # Omaslack's update screen, shown the way Omarchy shows its own update
 # (omarchy-update): the floating terminal with Omarchy's logo, a box with
 # both versions and the exact command, the command with its output in view
-# (`omarchy plugin update` shows the changes and asks itself; a pull of your
-# own checkout is asked here, with gum's confirm), a line saying how it
+# (asked here, with gum's confirm; `omarchy plugin update` runs with --yes,
+# so its whole diff stays out: the releases page has what's new), a line saying how it
 # went, and a key to close. A no closes it: 130, which Omarchy's wrapper
 # takes as nothing to wait on.
-# core/Updater.qml calls `open`, which opens the terminal and `run`s in it.
+# `quiet` is the same update without the screen: forked off, nothing asked
+# (the click on Update was the yes), the output only in the log, then the
+# restart. core/Updater.qml calls it; `open` opens the terminal and `run`s in it.
 #
-#   update.sh open|run --mode=omarchy|checkout --id=<plugin id> --folder=<dir>
+#   update.sh open|quiet|run --mode=omarchy|checkout --id=<plugin id> --folder=<dir>
 #     --from=<version> --to=<version> [--base=<path prefix>] [--note=<json>]
 #     [--lang=en|pt-BR] [--repo=<url>] [--dry-run]
 #
@@ -61,6 +63,18 @@ open_terminal() {
   fi
   have uwsm-app && term=(uwsm-app -- "${term[@]}")
   setsid -f "${term[@]}" bash "$self" run --standalone "$@" >/dev/null 2>&1 </dev/null
+}
+
+# The update with no terminal: `run --quiet`, in a session of its own so the
+# shell restart it ends with can't take it along.
+run_quiet() {
+  local self
+  self=$(readlink -f -- "${BASH_SOURCE[0]}")
+  if [ -z "$dry" ]; then
+    printf '%s\n' "$note" >"$base.json" || return 1
+    rm -f -- "$base.rc" "$base.log" "$base.pid"
+  fi
+  setsid -f bash "$self" run --quiet "$@" >/dev/null 2>&1 </dev/null
 }
 
 # ---------------------------------------------------------------- run
@@ -184,9 +198,9 @@ migrate_id() {
 }
 
 run_update() {
-  local cmd shown before after rc now declined=""
+  local cmd shown
   case $mode in
-  omarchy) cmd=(omarchy plugin update "$id") ;;
+  omarchy) cmd=(omarchy plugin update "$id" --yes) ;;
   checkout) cmd=(git -C "$folder" pull --ff-only) ;;
   *)
     red "update.sh: unknown install mode '$mode'"
@@ -202,6 +216,7 @@ run_update() {
     trap 'finish 130' HUP INT TERM
   fi
   [ -z "$standalone" ] || clear
+  [ -z "$quiet" ] || { run_cmd; return; }
 
   local lines=(
     "$(t "Update Omaslack?" "Atualizar o Omaslack?")"
@@ -215,8 +230,6 @@ run_update() {
     ""
     "$(t "What's new" "Novidades"): $repo/releases"
   )
-  [ "$mode" != omarchy ] ||
-    lines=("${lines[@]:0:5}" "• $(t "Omarchy shows the changes, then asks to confirm" "O Omarchy mostra as mudanças e depois pede para confirmar")" "${lines[@]:5}")
   if have gum; then
     gum style --border normal --padding "1 2" "${lines[@]}"
   else
@@ -224,9 +237,8 @@ run_update() {
   fi
   echo
 
-  # Omarchy's update asks itself (the same prompt as for any plugin); only
-  # a pull of your own checkout is asked here.
-  if [ "$mode" = checkout ] && ! confirm "$(t "Continue with update?" "Continuar com a atualização?")"; then
+  # Asked here for both: Omarchy's own prompt comes after its whole diff.
+  if ! confirm "$(t "Continue with update?" "Continuar com a atualização?")"; then
     t "Update cancelled" "Atualização cancelada"
     echo
     finish 130
@@ -234,12 +246,18 @@ run_update() {
 
   echo
   printf '\033[2m$ %s\033[0m\n' "$shown"
+  run_cmd
+}
+
+# The command, its output in the log, the id's move and the restart.
+run_cmd() {
+  local before after rc now declined=""
   before=$(git -C "$folder" rev-parse HEAD 2>/dev/null)
   if [ -n "$dry" ]; then
     t "Dry run: nothing was run." "Simulação: nada foi rodado."
     echo
     rc=0
-  elif [ "$mode" = omarchy ]; then
+  elif [ "$mode" = omarchy ] && [ -z "$quiet" ]; then
     in_tty "${cmd[@]}"
     rc=$?
   else
@@ -248,8 +266,8 @@ run_update() {
   fi
   after=$(git -C "$folder" rev-parse HEAD 2>/dev/null)
 
-  # A no at Omarchy's prompt: it says "Skipped" and ends well, with what it
-  # fetched still ahead of this copy; or Ctrl+C in it.
+  # Ctrl+C in Omarchy's update, or it ending well with what it fetched still
+  # ahead of this copy.
   if [ "$mode" = omarchy ] && [ -z "$dry" ]; then
     [ "$rc" -ne 130 ] || declined=1
     [ "$rc" -ne 0 ] || [ "$before" != "$after" ] ||
@@ -301,7 +319,7 @@ run_update() {
 main() {
   local action=${1:-}
   shift
-  mode="" id="" folder="" from="" to="" note="{}" dry="" standalone=""
+  mode="" id="" folder="" from="" to="" note="{}" dry="" standalone="" quiet=""
   lang=en
   repo=https://github.com/leonavas/omaslack
   # The session's runtime folder, else a private one in the cache.
@@ -320,22 +338,24 @@ main() {
     --repo=*) repo=${arg#*=} ;;
     --dry-run) dry=1 ;;
     --standalone) standalone=1 ;;
+    --quiet) quiet=1 ;;
     *)
       echo "update.sh: unknown option $arg" >&2
       return 2
       ;;
     esac
-    # `open` hands its options on to `run`, all but run's own.
-    [ "$arg" = --standalone ] || opts+=("$arg")
+    # `open` and `quiet` hand their options on to `run`, all but run's own.
+    case $arg in --standalone | --quiet) ;; *) opts+=("$arg") ;; esac
   done
   command -v omarchy >/dev/null 2>&1 || PATH=$PATH:${OMARCHY_PATH:-/usr/share/omarchy}/bin
   [ -n "$dry" ] || mkdir -p -m 700 -- "${base%/*}" 2>/dev/null
 
   case $action in
   open) open_terminal "${opts[@]}" ;;
+  quiet) run_quiet "${opts[@]}" ;;
   run) run_update ;;
   *)
-    echo "usage: update.sh open|run --mode=omarchy|checkout --id=<id> --folder=<dir> --from=<v> --to=<v> [--base=<prefix>] [--note=<json>] [--lang=en|pt-BR] [--dry-run]" >&2
+    echo "usage: update.sh open|quiet|run --mode=omarchy|checkout --id=<id> --folder=<dir> --from=<v> --to=<v> [--base=<prefix>] [--note=<json>] [--lang=en|pt-BR] [--dry-run]" >&2
     return 2
     ;;
   esac

@@ -8,14 +8,12 @@ import Quickshell.Io
 // Slack session only ever goes to Slack), unless "Check for updates" is off
 // in Preferences (setting "checkUpdates"; the menu's check still looks).
 // Shown as the green button over your photo (Rail.qml) and in your menu
-// (DlgAccount.qml). A click opens the update the way Omarchy shows its own,
-// in its floating terminal (lib/update.sh): both versions and the exact
-// command, `omarchy plugin update` for a git folder in Omarchy's plugin
-// folder (what `omarchy plugin add` makes), which shows the changes and asks
-// itself, or `git pull --ff-only` for a checkout of this repo of your own,
-// after a confirm; then its output. Once it pulled, the whole shell
-// restarts (as omarchy-update ends), and the new copy brings the window
-// back and says how it went. A copy outside git only hears where to get it. Background checks are quiet; only the menu's
+// (DlgAccount.qml). A click is the yes: the update runs in the background
+// (lib/update.sh quiet), `omarchy plugin update --yes` for a git folder in
+// Omarchy's plugin folder (what `omarchy plugin add` makes), or `git pull
+// --ff-only` for a checkout of this repo of your own. Once it pulled, the
+// whole shell restarts (as omarchy-update ends), and the new copy brings
+// the window back and says how it went; a failure says why here. A copy outside git only hears where to get it. Background checks are quiet; only the menu's
 // check reports errors.
 Item {
   id: u
@@ -47,7 +45,7 @@ Item {
 
   // ---------------------------------------------------------------- state
   property string latest: ""     // the newer version found
-  // "" (nothing to do), "available", "updating" (its terminal is open), or
+  // "" (nothing to do), "available", "updating" (running in the background), or
   // "updated": on disk but not loaded (the shell didn't restart; the button
   // restarts it).
   property string phase: ""
@@ -166,16 +164,16 @@ Item {
   }
 
   // ---------------------------------------------------------------- updating
-  // The button and the menu's row: open the update's terminal, or reload
+  // The button and the menu's row: update in the background, or reload
   // once it's on disk; or how to, when the copy isn't in git.
   function update() {
     if (u.phase === "updated") { u.reload(); return }
     if (u.phase !== "available") return
     if (u.how || !u.pluginId) { u.say(u.how || u.app.tr("Couldn't find where the plugin is installed", "Não foi possível achar onde o plugin está instalado")); return }
     u.phase = "updating"
-    u.say(u.app.tr("Confirm the update to " + u.latest + " in the terminal", "Confirme a atualização para " + u.latest + " no terminal"))
+    u.say(u.app.tr("Updating to " + u.latest + "… the shell restarts once it's done", "Atualizando para " + u.latest + "… o shell reinicia ao terminar"))
     // The script from the real folder (where), which an update may have moved.
-    run.command = ["bash", (u.folder || u.folderIn) + "/lib/update.sh", "open", "--mode=" + u.mode, "--id=" + u.pluginId, "--folder=" + u.folder,
+    run.command = ["bash", (u.folder || u.folderIn) + "/lib/update.sh", "quiet", "--mode=" + u.mode, "--id=" + u.pluginId, "--folder=" + u.folder,
                    "--from=" + u.version, "--to=" + u.latest, "--base=" + u.base, "--note=" + u.note(u.latest),
                    "--lang=" + u.app.lang, "--repo=" + u.repo]
     run.running = true
@@ -183,15 +181,15 @@ Item {
   }
   function note(to) { return JSON.stringify({ from: u.version, to: to, open: !!u.app.windowOpen }) }
 
-  // Leaves the note and opens the terminal, forked off in a session (and a
-  // uwsm scope) of its own, so the shell restart that comes with the update
-  // doesn't close it; done at once. Not 0: no terminal to open, and no note left.
+  // Leaves the note and starts the update, forked off in a session of its
+  // own, so the shell restart that comes with it doesn't take it along; done
+  // at once. Not 0: it didn't start, and no note left.
   Process {
     id: run
     onExited: code => {
       if (code !== 0 && u.phase === "updating") {
         u.phase = "available"
-        u.say(u.app.tr("Couldn't open a terminal for the update", "Não foi possível abrir um terminal para a atualização"))
+        u.say(u.app.tr("Couldn't start the update", "Não foi possível iniciar a atualização"))
       }
       if (!pickup.running) pickup.running = true
     }
@@ -214,7 +212,7 @@ Item {
   // when nothing reloaded (it failed, was declined or up to date already),
   // else the new one. Taken once its exit code is two seconds old, so a
   // restart it set off has replaced this copy by then. 3: nothing pending;
-  // 4: just done; 5: its terminal is still open (by the run's pid; one that
+  // 4: just done; 5: it's still running (by the run's pid; one that
   // never started is given up on after thirty seconds).
   Process {
     id: pickup
@@ -234,10 +232,10 @@ Item {
       if (code === 4 || code === 5 || (code === 3 && run.running)) return
       pickupTimer.stop()
       if (u.phase !== "updating") return
-      // Updating, with no note left: its terminal never started, or went
-      // without a word (killed).
+      // Updating, with no note left: it never started, or went without a
+      // word (killed).
       u.phase = "available"
-      u.say(u.app.tr("Didn't update: the terminal didn't open or was closed", "Não atualizou: o terminal não abriu ou foi fechado"))
+      u.say(u.app.tr("Didn't update: it stopped before the end", "Não atualizou: parou antes de terminar"))
     }
   }
   Timer { id: pickupTimer; interval: 1000; repeat: true; onTriggered: if (!pickup.running) pickup.running = true }
@@ -251,7 +249,7 @@ Item {
     var log = lines.slice(2).map(function(l) { return l.trim() }).filter(function(l) { return l !== "" })
     var mine = u.phase === "updating"
     var msg
-    // Declined in the terminal, or it was closed: it said so there.
+    // Stopped (Ctrl+C or closed, in the terminal of `update.sh open`).
     if (rc === 130) {
       if (mine) u.phase = u.latest ? "available" : ""
       return

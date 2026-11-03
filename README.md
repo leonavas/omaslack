@@ -210,7 +210,7 @@ quickshell ipc -p "$OMARCHY_PATH/shell" call omaslack <command> [args]
 
 Omaslack checks the `manifest.json` on GitHub's `main` branch (`raw.githubusercontent.com/leonavas/omaslack`) a little after start-up and every 6 hours. Only that plain file is fetched, and nothing of yours is sent. The automatic check is on by default; **Check for updates** in Preferences → Advanced turns it off. **Check for updates** in your account menu checks on demand either way. When a newer version exists, a green button shows over your photo in the rail.
 
-Nothing is updated until you confirm. Clicking the button (or **Update to …** in your account menu or in About) opens the same floating terminal Omarchy uses for its own update. It shows the current and the new version, a **What's new** link to the [releases page](https://github.com/leonavas/omaslack/releases), and the exact command it will run: `omarchy plugin update omaslack`, Omarchy's own plugin update, which shows the changes and asks you to confirm. Say no (or close the terminal) and nothing changes. Say yes and it runs with its output in view, followed by a line saying whether it worked; a failure changes nothing. Once it updated, the whole shell restarts with `omarchy-restart-shell`, as Omarchy's own update ends; the new copy brings the window back and tells you how it went. Press any key to close the terminal.
+Nothing is updated until you click. Clicking the button (or **Update to …** in your account menu or in About) updates right away, in the background: `omarchy plugin update omaslack --yes`, Omarchy's own plugin update. A failure changes nothing and says why in a toast. Once it updated, the whole shell restarts with `omarchy-restart-shell`, as Omarchy's own update ends; the new copy brings the window back and tells you how it went. What changed is on the [releases page](https://github.com/leonavas/omaslack/releases).
 
 Installed before 0.5.0? The plugin was then called `leonavas.omaslack`, and after updating its bar icon disappears because the id is now `omaslack`. Move it to the new id once, keeping your bar settings:
 
@@ -220,7 +220,7 @@ sed -i 's/"leonavas.omaslack"/"omaslack"/' ~/.config/omarchy/shell.json
 omarchy-restart-shell
 ```
 
-The screen is `lib/update.sh`. It falls back to `xdg-terminal-exec` or `$TERMINAL` when Omarchy's terminal helper is missing. A development checkout updates with `git pull --ff-only` instead, after a confirm of its own (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).
+The update is `lib/update.sh quiet`; `lib/update.sh open` runs the same one in Omarchy's floating terminal, with both versions and a confirm. A development checkout updates with `git pull --ff-only` instead (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).
 
 ## Environment variables
 

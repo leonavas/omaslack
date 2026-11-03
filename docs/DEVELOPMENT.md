@@ -20,7 +20,7 @@ After changing QML, restart the shell with `omarchy-restart-shell`: a plugin res
 
 ## The update screen
 
-`bash lib/update.sh run --dry-run --mode=checkout --folder=. --from=0.2.0 --to=0.3.0` shows the update screen in your current terminal without running anything (`--mode=omarchy --id=omaslack` shows the other one).
+`bash lib/update.sh run --dry-run --mode=checkout --folder=. --from=0.2.0 --to=0.3.0` shows the update screen in your current terminal without running anything (`--mode=omarchy --id=omaslack` shows the other one); with `--quiet` instead, the one the app runs, without the screen.
 
 An install made by `omarchy plugin add` (a git folder in Omarchy's plugin folder) updates with `omarchy plugin update <id>`, without `--yes`: Omarchy shows the diff and asks to confirm, and a no there leaves everything as it was.
 

@@ -121,6 +121,8 @@ Item {
     // leads, else over the one under the mouse.
     MessageToolbar {
       id: rowBar
+      // A ListView keeps its own children (unlike a Flickable): into the content by hand.
+      parent: list.contentItem
       app: root.app
       win: root.win
       ws: root.ws

@@ -36,9 +36,10 @@ Item {
     menuLayer.hot = -1
     try { if (f && f !== menuLayer && f.visible) f.forceActiveFocus() } catch (e) {}
   }
-  function openSub(level, items, x, y) {
+  // `left`: where its right edge goes on the other side, when the right has no room.
+  function openSub(level, items, x, y, left) {
     var s = menuLayer.stack.slice(0, level + 1)
-    s.push({ items: items, x: x, y: y })
+    s.push({ items: items, x: x, y: y, left: left })
     menuLayer.stack = s
   }
   function trim(level) { if (menuLayer.stack.length > level + 1) menuLayer.stack = menuLayer.stack.slice(0, level + 1) }
@@ -97,7 +98,11 @@ Item {
       radius: Math.max(6, menuLayer.t.radiusCard)
       width: menuLayer.measure(modelData.items)
       height: col.implicitHeight + menuLayer.t.sp(12)
-      x: Math.max(4, Math.min(modelData.x, menuLayer.width - width - 4))
+      x: {
+        var x = modelData.x
+        if (modelData.left !== undefined && x + width > menuLayer.width - 4) x = modelData.left - width
+        return Math.max(4, Math.min(x, menuLayer.width - width - 4))
+      }
       y: Math.max(4, Math.min(modelData.y, menuLayer.height - height - 4))
 
       MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
@@ -251,7 +256,8 @@ Item {
                     menuLayer.hot = -1
                     if (parent.it.sub && parent.on) {
                       var p = parent.mapToItem(menuLayer, parent.width + menuLayer.t.sp(10), -menuLayer.t.sp(6))
-                      menuLayer.openSub(card.level, parent.it.sub, p.x, p.y)
+                      var l = parent.mapToItem(menuLayer, -menuLayer.t.sp(10), 0)
+                      menuLayer.openSub(card.level, parent.it.sub, p.x, p.y, l.x)
                     } else menuLayer.trim(card.level)
                   }
                   onClicked: menuLayer.run(parent.it)
