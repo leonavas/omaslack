@@ -90,7 +90,14 @@ Item {
   // A local http URL that plays a Slack file as it comes (transport.py's
   // stream): cb({ok, url}).
   function stream(url, cb) { return _request({ op: "stream", url: url }, cb) }
-  function postFile(url, path, cb) { return _request({ op: "post_file", url: url, path: path }, cb) }
+  // `onProgress(done, total)`: as it goes up.
+  function postFile(url, path, cb, onProgress) {
+    var id = _request({ op: "post_file", url: url, path: path, progress: !!onProgress }, cb)
+    if (onProgress) root._progress[id] = onProgress
+    return id
+  }
+  // Stops a postFile on its way: its cb gets {ok: false, cancelled: true}.
+  function cancel(id) { _write({ op: "cancel", target: id }) }
   function multipart(method, fields, path, field, mime, cb) {
     return _request({ op: "multipart", method: method, fields: fields || {}, path: path || "", field: field || "file", mime: mime || "" }, cb)
   }

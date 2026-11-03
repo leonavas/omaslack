@@ -10,7 +10,7 @@ JSON lines:
   stdin   {"id": 7, "op": "call", "method": "auth.test", "params": {...}}
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
-Ops: creds, call, download, video_frame, stream, post_file, multipart, read_cookie, write_private,
+Ops: creds, call, download, video_frame, stream, post_file, cancel, multipart, read_cookie, write_private,
 secret_store, secret_lookup, secret_clear, sweep, ws_open, ws_send, ws_close. Socket
 traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
@@ -173,6 +173,15 @@ def request(method, url, body=None, headers=None, stream_to=None, progress=None,
             if attempt == 1:
                 raise
     raise OSError("unreachable")
+
+
+# post_file ids called off ({"op": "cancel", "target": id}): their next
+# slice stops the upload.
+cancelled = set()
+
+
+class Cancelled(Exception):
+    pass
 
 
 class Later:
@@ -537,18 +546,49 @@ def free_name(dest):
 
 
 def op_post_file(msg):
-    """The bytes of a file to an upload URL (files.getUploadURLExternal)."""
+    """The bytes of a file to an upload URL (files.getUploadURLExternal),
+    sent a slice at a time. `progress`: {"id", "progress": bytes, "total"}
+    lines as they go, a few a second at most, as download's."""
     path = msg["path"]
-    with open(path, "rb") as f:
-        data = f.read()
+    try:
+        total = os.path.getsize(path)
+    except OSError as e:
+        return {"ok": False, "error": str(e)}
+    last = [0.0]
+    rid = msg.get("id")
+
+    class Body:
+        # Read from the start on each try (request reopens a stale connection once).
+        def __iter__(self):
+            done = 0
+            with open(path, "rb") as f:
+                while True:
+                    if rid in cancelled:
+                        raise Cancelled()
+                    chunk = f.read(1 << 16)
+                    if not chunk:
+                        return
+                    done += len(chunk)
+                    if msg.get("progress"):
+                        now = time.monotonic()
+                        if now - last[0] >= 0.2 or done == total:
+                            last[0] = now
+                            emit({"id": msg.get("id"), "progress": done, "total": total})
+                    yield chunk
     url = msg["url"]
     u = urllib.parse.urlsplit(url)
     headers = auth_headers() if is_slack(u.hostname) else {}
     headers["Content-Type"] = "application/octet-stream"
+    headers["Content-Length"] = str(total)
     try:
-        status, rh, body = request("POST", url, data, headers)
+        status, rh, body = request("POST", url, Body(), headers)
+    except Cancelled:
+        drop_conn(u.hostname)
+        return {"ok": False, "error": "cancelled", "cancelled": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    finally:
+        cancelled.discard(rid)
     return {"ok": 200 <= status < 300, "status": status, "text": (body or b"")[:2000].decode("utf-8", "replace")}
 
 
@@ -1050,6 +1090,8 @@ def main():
             op_ws_send(msg)
         elif op == "ws_close":
             op_ws_close(msg)
+        elif op == "cancel":
+            cancelled.add(msg.get("target"))
         elif op == "write_private":
             # Here, in order: two saves in a row land in that order.
             try:

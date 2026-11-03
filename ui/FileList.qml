@@ -67,11 +67,14 @@ Flow {
     id: cardC
     Rectangle {
       readonly property var f: parent.modelData
-      // Fetching to open (Workspace.openFile): how far along.
+      // Fetching to open (Workspace.openFile), or going up (Workspace.upload): how far along.
       readonly property var dl: fl.ws.downloadState(fl.ws.fileUrl(f))
+      readonly property bool up: !!f.uploading
       readonly property real dlFrac: dl && dl.total > 0 ? Math.min(1, dl.done / dl.total) : 0
+      // Up and waiting for Slack to post it.
+      readonly property bool sending: up && !!dl && dl.total > 0 && dl.done >= dl.total
       width: Math.min(fl.width, fl.t.sp(380))
-      height: fl.t.sp(58)
+      height: up ? fl.t.sp(68) : fl.t.sp(58)
       radius: Math.max(8, fl.t.radiusCard)
       color: cardMa.containsMouse ? fl.t.hover : fl.t.alpha(fl.t.fg, 0.03)
       border.width: 1
@@ -82,37 +85,69 @@ Flow {
         anchors.verticalCenter: parent.verticalCenter
         width: fl.t.sp(38); height: width; radius: Math.max(4, fl.t.radiusSmall)
         color: fl.t.alpha(fl.t.blue, 0.16)
-        Glyph { app: fl.app; anchors.centerIn: parent; visible: !parent.parent.dl; icon: U.fileIcon(parent.parent.f); size: fl.t.fsTitle + 4; color: fl.t.blue }
-        Spinner { app: fl.app; anchors.centerIn: parent; visible: !!parent.parent.dl; size: fl.t.sp(18); color: fl.t.blue }
+        readonly property bool spin: !!parent.dl && (!parent.up || parent.sending)
+        Glyph { app: fl.app; anchors.centerIn: parent; visible: !parent.spin; icon: U.fileIcon(parent.parent.f); size: fl.t.fsTitle + 4; color: fl.t.blue }
+        Spinner { app: fl.app; anchors.centerIn: parent; visible: parent.spin; size: fl.t.sp(18); color: fl.t.blue }
       }
       Column {
         anchors.left: ic.right
         anchors.leftMargin: fl.t.sp(10)
-        anchors.right: btns.left
+        anchors.right: parent.up ? stopUp.left : btns.left
         anchors.rightMargin: fl.t.sp(6)
         anchors.verticalCenter: parent.verticalCenter
-        spacing: 2
+        spacing: parent.up ? fl.t.sp(4) : 2
         Text { text: parent.parent.f.title || parent.parent.f.name; textFormat: Text.PlainText; color: fl.t.fgBright; font.family: fl.t.font; font.pixelSize: fl.t.fsText - 1; font.bold: true; width: parent.width; elide: Text.ElideMiddle }
+        // Uploading: a bar of its own.
+        Rectangle {
+          readonly property var card: parent.parent
+          visible: card.up
+          width: parent.width
+          height: fl.t.sp(6)
+          radius: height / 2
+          color: fl.t.alpha(fl.t.fg, 0.1)
+          Rectangle {
+            width: parent.width * parent.card.dlFrac
+            height: parent.height
+            radius: parent.radius
+            color: fl.t.blue
+            Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          }
+        }
         Text {
           readonly property var card: parent.parent
-          text: card.dl ? fl.app.tr("Downloading", "Baixando") + (card.dl.total > 0 ? " " + Math.round(card.dlFrac * 100) + "%  ·  " + U.humanSize(card.dl.done, fl.app.lang) + fl.app.tr(" of ", " de ") + U.humanSize(card.dl.total, fl.app.lang) : "…")
+          text: card.sending ? fl.app.tr("Sending…", "Enviando…")
+                : card.up ? Math.round(card.dlFrac * 100) + "%" + (card.dl && card.dl.total > 0 ? "  ·  " + U.humanSize(card.dl.done, fl.app.lang) + fl.app.tr(" of ", " de ") + U.humanSize(card.dl.total, fl.app.lang) : "")
+                : card.dl ? fl.app.tr("Downloading", "Baixando") + (card.dl.total > 0 ? " " + Math.round(card.dlFrac * 100) + "%  ·  " + U.humanSize(card.dl.done, fl.app.lang) + fl.app.tr(" of ", " de ") + U.humanSize(card.dl.total, fl.app.lang) : "…")
                         : (card.f.prettyType || (card.f.filetype || "").toUpperCase()) + (card.f.size ? "  ·  " + U.humanSize(card.f.size, fl.app.lang) : "")
           textFormat: Text.PlainText
           color: fl.t.fgDim; font.family: fl.t.font; font.pixelSize: fl.t.fsSmall; width: parent.width; elide: Text.ElideRight
         }
+      }
+      IconButton {
+        id: stopUp
+        // Kept (dimmed) once Slack is posting it, so the bar keeps its width.
+        visible: parent.up
+        enabled2: fl.ws.canCancelUpload(parent.f.uploading)
+        anchors.right: parent.right
+        anchors.rightMargin: fl.t.sp(8)
+        anchors.verticalCenter: parent.verticalCenter
+        app: fl.app
+        icon: "󰅖"
+        tip: enabled2 ? fl.app.tr("Cancel upload", "Cancelar envio") : fl.app.tr("Already sending, can't be canceled", "Já está sendo enviado, não dá para cancelar")
+        onClicked: fl.ws.cancelUpload(parent.f.uploading)
       }
       Row {
         id: btns
         anchors.right: parent.right
         anchors.rightMargin: fl.t.sp(8)
         anchors.verticalCenter: parent.verticalCenter
-        visible: cardMa.containsMouse || dl.hovered || op.hovered || lk.hovered
+        visible: !parent.up && (cardMa.containsMouse || dlBtn.hovered || op.hovered || lk.hovered)
         IconButton { id: op; app: fl.app; icon: "󰏌"; tip: fl.app.tr("Open", "Abrir"); onClicked: fl.ws.openFile(parent.parent.f) }
-        IconButton { id: dl; app: fl.app; visible: !!parent.parent.f.download; icon: "󰇚"; tip: fl.app.tr("Download", "Baixar"); onClicked: fl.ws.saveFile(parent.parent.f) }
+        IconButton { id: dlBtn; app: fl.app; visible: !!parent.parent.f.download; icon: "󰇚"; tip: fl.app.tr("Download", "Baixar"); onClicked: fl.ws.saveFile(parent.parent.f) }
         IconButton { id: lk; app: fl.app; visible: !!parent.parent.f.permalink; icon: "󰌷"; tip: fl.app.tr("Copy link to file", "Copiar link do arquivo"); onClicked: { fl.app.copy(parent.parent.f.permalink); fl.win.toast(fl.app.tr("Link copied", "Link copiado")) } }
       }
       Rectangle {
-        visible: !!parent.dl
+        visible: !!parent.dl && !parent.up
         x: parent.radius
         y: parent.height - height - fl.t.sp(3)
         width: (parent.width - 2 * parent.radius) * parent.dlFrac
@@ -125,8 +160,8 @@ Flow {
         anchors.fill: parent
         z: -1
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: fl.ws.openFile(parent.f)
+        cursorShape: parent.up ? Qt.ArrowCursor : Qt.PointingHandCursor
+        onClicked: if (!parent.up) fl.ws.openFile(parent.f)
       }
     }
   }

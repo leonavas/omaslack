@@ -2095,13 +2095,7 @@ Item {
     var local = Model.parseMessage({ ts: U.nowTs(), user: root.me.id, text: params.text, blocks: JSON.parse(params.blocks) })
     local.pending = true
     var key = conv + "/" + (opts.threadTs || "")
-    if (opts.threadTs) {
-      var r = root.replies[key]
-      if (r) { root.replies[key] = { msgs: Model.upsert(r.msgs, local), loading: r.loading }; root.repliesRev++; root.repliesUpdated(key) }
-    } else {
-      var h = root.histories[conv]
-      if (h && !h.detached) root.setHistory(conv, { msgs: Model.upsert(h.msgs, local), noOlder: h.noOlder, loading: h.loading, detached: false })
-    }
+    root.addLocal(conv, opts.threadTs, local)
     function done(b) {
       var m = Model.parseMessage(b.message || {})
       if (!m.ts) m.ts = b.ts || local.ts
@@ -2162,6 +2156,18 @@ Item {
     root.dropLocal(conv, local.ts, opts.threadTs)
     root.say(root.tr("Not sent: ", "Não enviada: ") + root.errorText(err))
     root.restoreText(conv, opts.threadTs || "", typed)
+  }
+
+  // A message of ours shown before Slack has it (pending).
+  function addLocal(conv, threadTs, local) {
+    if (threadTs) {
+      var key = conv + "/" + threadTs
+      var r = root.replies[key]
+      if (r) { root.replies[key] = { msgs: Model.upsert(r.msgs, local), loading: r.loading }; root.repliesRev++; root.repliesUpdated(key) }
+    } else {
+      var h = root.histories[conv]
+      if (h && !h.detached) root.setHistory(conv, { msgs: Model.upsert(h.msgs, local), noOlder: h.noOlder, loading: h.loading, detached: false })
+    }
   }
 
   function dropLocal(conv, ts, threadTs) {
@@ -2320,31 +2326,107 @@ Item {
   }
 
   // ---------------------------------------------------------------- files
+  // The message shows at once, pending, with a card per file whose bar
+  // follows its bytes up (downloads, under "upload:" keys). It stays until
+  // the real message (one with those files) is in, from the socket or a
+  // fetch every few seconds, a minute at most. Until Slack is told to post
+  // it, the card's ✕ calls it off (cancelUpload).
+  property var _sentUploads: []       // [{conv, ts, threadTs, ids, at, polled, clear}]
+  property var _uploads: ({})         // the pending message's ts → its cancel()
   function upload(conv, files, comment, threadTs) {
     var ids = []
     var left = files.length
-    var failed = false
-    root.say(root.tr("Uploading…", "Enviando…"))
-    files.forEach(function(f) {
+    var posts = [], off = false
+    var local = Model.parseMessage({ ts: U.nowTs(), user: root.me.id, text: comment ? Markup.escape(comment) : "", blocks: comment ? Markup.blocks(comment) : [] })
+    local.pending = true
+    local.files = files.map(function(f, i) {
+      var ext = String(f.name || "").split(".").pop()
+      return { id: "", name: f.name || "file", title: "", thumb: null, w: 0, h: 0, full: "", permalink: "", download: "upload:" + local.ts + ":" + i,
+               size: f.size || 0, filetype: ext.toLowerCase(), prettyType: "", mimetype: "", external: false, image: false, mode: "",
+               preview: "", poster: "", posterW: 0, posterH: 0, duration: 0, uploading: local.ts }
+    })
+    local.files.forEach(function(lf) { root.downloads[lf.download] = { done: 0, total: lf.size } })
+    root.downloadsRev++
+    root.addLocal(conv, threadTs, local)
+    function clear() {
+      delete root._uploads[local.ts]
+      local.files.forEach(function(lf) { delete root.downloads[lf.download] })
+      root.downloadsRev++
+    }
+    root._uploads[local.ts] = function() {
+      off = true
+      posts.forEach(function(id) { wire.cancel(id) })
+      fail(root.tr("Upload canceled", "Envio cancelado"))
+    }
+    function fail(text) {
+      clear()
+      root.dropLocal(conv, local.ts, threadTs)
+      root.say(text)
+      root.restoreText(conv, threadTs, comment)
+    }
+    files.forEach(function(f, i) {
+      var key = local.files[i].download
       root.api("files.getUploadURLExternal", { filename: f.name, length: f.size }, function(b) {
-        if (!b.upload_url) { failed = true; check(); return }
-        wire.postFile(b.upload_url, f.path, function(r) {
-          if (!r.ok) failed = true
-          else ids.push({ id: b.file_id, title: f.name })
+        if (off) return
+        if (!b.upload_url) { check(); return }
+        posts.push(wire.postFile(b.upload_url, f.path, function(r) {
+          if (off) return
+          if (r.ok) ids.push({ id: b.file_id, title: f.name })
           check()
-        })
-      }, function(err) { failed = true; root.say(root.errorText(err)); check() })
+        }, function(done, total) {
+          if (off) return
+          root.downloads[key] = { done: done, total: total || f.size || 0 }
+          root.downloadsRev++
+        }))
+      }, function(err) { if (off) return; root.say(root.errorText(err)); check() })
     })
     function check() {
       if (--left > 0) return
-      if (!ids.length) { root.say(root.tr("Upload failed", "O envio falhou")); root.restoreText(conv, threadTs, comment); return }
+      if (!ids.length) { fail(root.tr("Upload failed", "O envio falhou")); return }
+      // Slack posts it now: too late to call off.
+      delete root._uploads[local.ts]
+      root.downloadsRev++
       var p = { files: JSON.stringify(ids), channel_id: conv }
       if (comment) p.initial_comment = Markup.escape(comment)
       if (threadTs) p.thread_ts = threadTs
       root.api("files.completeUploadExternal", p, function() {
-        root.say(root.tr("Uploaded", "Enviado"))
-        Qt.callLater(function() { if (threadTs) root.fetchReplies(conv, threadTs); else root.fetchHistory(conv, "poll") })
-      }, function(err) { root.say(root.errorText(err)); root.restoreText(conv, threadTs, comment) })
+        if (ids.length < files.length) root.say(root.tr("Some files didn't upload", "Alguns arquivos não foram enviados"))
+        var fileIds = ids.map(function(x) { return x.id })
+        // The socket's message, matched by text, may have taken the stand-in
+        // off: back until those files are in.
+        if (!root.uploadArrived(conv, threadTs, fileIds)) root.addLocal(conv, threadTs, local)
+        root._sentUploads = root._sentUploads.concat([{ conv: conv, ts: local.ts, threadTs: threadTs, ids: fileIds, at: Date.now(), polled: Date.now(), clear: clear }])
+      }, function(err) { fail(root.errorText(err)) })
+    }
+  }
+  // A message of the conversation (or thread) with one of these files.
+  function uploadArrived(conv, threadTs, ids) {
+    var list = threadTs ? (root.replies[conv + "/" + threadTs] || { msgs: [] }).msgs : (root.histories[conv] || { msgs: [] }).msgs
+    return list.some(function(m) { return !m.pending && m.files.some(function(f) { return ids.indexOf(f.id) >= 0 }) })
+  }
+  function canCancelUpload(ts) { root.downloadsRev; return !!root._uploads[ts] }
+  function cancelUpload(ts) { var c = root._uploads[ts]; if (c) c() }
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root._sentUploads.length > 0
+    onTriggered: {
+      var now = Date.now(), keep = []
+      root._sentUploads.forEach(function(u) {
+        var arrived = root.uploadArrived(u.conv, u.threadTs, u.ids)
+        if (arrived || now - u.at > 60000) {
+          u.clear()
+          root.dropLocal(u.conv, u.ts, u.threadTs)
+          if (!arrived) { if (u.threadTs) root.fetchReplies(u.conv, u.threadTs); else root.fetchHistory(u.conv, "poll") }
+          return
+        }
+        if (now - u.polled >= 5000) {
+          u.polled = now
+          if (u.threadTs) root.fetchReplies(u.conv, u.threadTs); else root.fetchHistory(u.conv, "poll")
+        }
+        keep.push(u)
+      })
+      if (keep.length !== root._sentUploads.length) root._sentUploads = keep
     }
   }
 
