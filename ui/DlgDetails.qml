@@ -325,14 +325,43 @@ DialogFrame {
       if (r < 0) return
       out.push({ key: uid, kind: "user", id: uid, rank: r, name: (u ? u.name : uid).toLowerCase() })
     })
-    out.sort(function(a, b) { return a.rank - b.rank || (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)) })
-    if (!q && d.canAdd) out.unshift({ key: "+add", kind: "add" })
-    return out
+    var byRank = function(a, b) { return a.rank - b.rank || (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)) }
+    out.sort(byRank)
+    if (!d.canAdd) return out
+    if (!q) { out.unshift({ key: "+add", kind: "add" }); return out }
+    // Searching, like Slack: Add people, the matching members, then the
+    // matching people who aren't in the channel, each with Add to Channel.
+    var inside = {}, outside = [], me = w.me.id
+    d.memberIds.forEach(function(x) { inside[x] = true })
+    for (var id in w.users) {
+      var u = w.users[id]
+      if (!u || u.bot || u.deleted || id === me || inside[id]) continue
+      var r = d.score(id, [u.name || "", u.real || "", u.handle || ""], Q)
+      if (r >= 0) outside.push({ key: "out:" + id, kind: "outside", id: id, rank: r, name: (u.name || "").toLowerCase() })
+    }
+    outside.sort(byRank)
+    var rows = [{ key: "+add", kind: "add" }, { key: "#in", kind: "head", label: d.app.tr("Members in this channel", "Membros neste canal") }]
+    rows = rows.concat(out.length ? out : [{ key: "-none", kind: "none" }])
+    if (outside.length) rows = rows.concat([{ key: "#out", kind: "head", line: true, label: d.app.tr("Not in this channel", "Fora deste canal") }], outside.slice(0, 30))
+    return rows
+  }
+  // The first person the search found, for Enter.
+  readonly property int firstHit: {
+    var rows = d.memberRows
+    for (var i = 0; i < rows.length; i++) if (rows[i].kind === "user" || rows[i].kind === "outside") return i
+    return rows.length ? 0 : -1
+  }
+  // Arrows skip the section headers and the "No matches" row.
+  function stepMember(delta) {
+    var rows = d.memberRows, i = memberList.currentIndex
+    for (var j = i + delta; j >= 0 && j < rows.length; j += delta) {
+      if (rows[j].kind !== "head" && rows[j].kind !== "none") { memberList.currentIndex = j; memberList.positionViewAtIndex(j, ListView.Contain); return }
+    }
   }
 
   function openMember(i) {
     var r = d.memberRows[i]
-    if (!r) return
+    if (!r || r.kind === "head" || r.kind === "none") return
     if (r.kind === "add") { d.startAdding(); return }
     var w = d.ws
     d.closed()
@@ -453,6 +482,20 @@ DialogFrame {
       win.toast(n === 1 ? app.tr("1 person added to the channel", "1 pessoa adicionada ao canal") : n + app.tr(" people added to the channel", " pessoas adicionadas ao canal"))
       d.stopAdding()
       d.loadMembers()
+    })
+  }
+
+  // Add to Channel on a search result that isn't a member.
+  function addOne(uid) {
+    if (d.busy) return
+    var w = d.ws, life = d.life, win = d.win, app = d.app, name = w.userName(uid) || uid, chan = d.hashName
+    d.busy = "add:" + uid
+    w.invite(d.convId, [uid], function(err) {
+      if (!life.on) return
+      d.busy = ""
+      if (err) { win.toast(err); return }
+      d.memberIds = d.memberIds.concat([uid])
+      win.toast(name + app.tr(" was added to ", " foi adicionado a ") + chan)
     })
   }
 
@@ -763,9 +806,9 @@ DialogFrame {
               icon: "󰍉"
               placeholderText: d.app.tr("Find members", "Encontrar membros")
               Keys.onEscapePressed: event => { if (search.text !== "") { search.text = ""; event.accepted = true } else event.accepted = false }
-              Keys.onDownPressed: memberList.incrementCurrentIndex()
-              Keys.onUpPressed: memberList.decrementCurrentIndex()
-              onTextEdited: memberList.currentIndex = text.trim() !== "" ? 0 : -1
+              Keys.onDownPressed: d.stepMember(1)
+              Keys.onUpPressed: d.stepMember(-1)
+              onTextEdited: Qt.callLater(function() { memberList.currentIndex = search.text.trim() !== "" ? d.firstHit : -1 })
               onAccepted: if (memberList.currentIndex >= 0) d.openMember(memberList.currentIndex)
             }
             IconButton {
@@ -797,42 +840,69 @@ DialogFrame {
               required property var modelData
               required property int index
               readonly property bool isAdd: modelData.kind === "add"
-              readonly property var u: !isAdd && d.ws ? d.ws.user(modelData.id) : null
-              readonly property var status: !isAdd && d.ws ? d.ws.statusOf(modelData.id) : null
-              readonly property bool manager: !isAdd && d.managerIds.indexOf(modelData.id) >= 0
-              readonly property bool confirming: !isAdd && d.confirm === "kick:" + modelData.id
-              readonly property bool hasMenu: !isAdd && d.memberItems(modelData.id).length > 0
-              readonly property real actionsW: confirming ? kickRow.width + d.t.sp(12) : (hasMenu ? moreBtn.width + d.t.sp(12) : 0)
+              readonly property bool isHead: modelData.kind === "head"
+              readonly property bool isNone: modelData.kind === "none"
+              readonly property bool outside: modelData.kind === "outside"
+              readonly property bool person: modelData.kind === "user" || outside
+              readonly property var u: person && d.ws ? d.ws.user(modelData.id) : null
+              readonly property var status: person && d.ws ? d.ws.statusOf(modelData.id) : null
+              readonly property bool manager: modelData.kind === "user" && d.managerIds.indexOf(modelData.id) >= 0
+              readonly property bool confirming: modelData.kind === "user" && d.confirm === "kick:" + modelData.id
+              readonly property bool hasMenu: modelData.kind === "user" && d.memberItems(modelData.id).length > 0
+              readonly property real actionsW: confirming ? kickRow.width + d.t.sp(12) : (outside ? addToChanBtn.width + d.t.sp(12) : (hasMenu ? moreBtn.width + d.t.sp(12) : 0))
               width: memberList.width
-              height: d.t.sp(52)
+              height: isHead ? (modelData.line ? d.t.sp(44) : d.t.sp(28)) : (isNone ? d.t.sp(44) : d.t.sp(52))
               radius: Math.max(6, d.t.radiusSmall)
-              color: mrowMa.containsMouse || memberList.currentIndex === index ? d.t.hover : "transparent"
+              color: !isHead && !isNone && (mrowMa.containsMouse || memberList.currentIndex === index) ? d.t.hover : "transparent"
 
-              // Add people: a tinted square with the icon, like Slack.
+              // Section header ("Members in this channel", "Not in this channel").
               Rectangle {
-                visible: mrow.isAdd
+                visible: mrow.isHead && !!mrow.modelData.line
+                y: d.t.sp(8)
+                x: -d.t.sp(8)
+                width: parent.width + d.t.sp(16)
+                height: 1
+                color: d.t.line
+              }
+              Text {
+                visible: mrow.isHead
+                x: d.t.sp(8)
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: d.t.sp(6)
+                text: mrow.modelData.label || ""
+                textFormat: Text.PlainText
+                color: d.t.fgDim
+                font.family: d.t.font
+                font.pixelSize: d.t.fsSmall
+              }
+
+              // Add people: a tinted square with the icon, like Slack;
+              // No matches: a dim one.
+              Rectangle {
+                visible: mrow.isAdd || mrow.isNone
                 x: d.t.sp(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: d.t.sp(36)
+                width: mrow.isNone ? d.t.sp(28) : d.t.sp(36)
                 height: width
                 radius: Math.max(6, d.t.radiusSmall)
-                color: d.t.alpha(d.t.accent, 0.16)
-                Glyph { anchors.centerIn: parent; app: d.app; icon: "󰠁"; color: d.t.accent; size: d.t.fsIcon + 2 }
+                color: mrow.isNone ? d.t.alpha(d.t.fgDim, 0.16) : d.t.alpha(d.t.accent, 0.16)
+                Glyph { anchors.centerIn: parent; app: d.app; icon: mrow.isNone ? "󰀄" : "󰠁"; color: mrow.isNone ? d.t.fgDim : d.t.accent; size: d.t.fsIcon + (mrow.isNone ? 0 : 2) }
               }
               Avatar {
-                visible: !mrow.isAdd
+                visible: mrow.person
                 x: d.t.sp(8)
                 anchors.verticalCenter: parent.verticalCenter
                 app: d.app
                 ws: d.ws
-                user: mrow.isAdd ? "" : mrow.modelData.id
+                user: mrow.person ? mrow.modelData.id : ""
                 size: d.t.sp(36)
                 showPresence: true
                 ring: d.t.popup
               }
 
               Column {
-                x: d.t.sp(56)
+                visible: !mrow.isHead
+                x: mrow.isNone ? d.t.sp(48) : d.t.sp(56)
                 width: parent.width - x - d.t.sp(12) - mrow.actionsW
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: d.t.sp(2)
@@ -840,12 +910,14 @@ DialogFrame {
                   spacing: d.t.sp(6)
                   width: parent.width
                   Text {
-                    text: mrow.isAdd ? d.app.tr("Add people", "Adicionar pessoas") : (d.ws.userName(mrow.modelData.id) || mrow.modelData.id)
+                    text: mrow.isAdd ? d.app.tr("Add people", "Adicionar pessoas")
+                        : mrow.isNone ? d.app.tr("No matches", "Nenhum resultado")
+                        : mrow.person ? (d.ws.userName(mrow.modelData.id) || mrow.modelData.id) : ""
                     textFormat: Text.PlainText
-                    color: mrow.isAdd ? d.t.fgBright : d.t.fgBright
+                    color: mrow.isNone ? d.t.fgDim : d.t.fgBright
                     font.family: d.t.font
                     font.pixelSize: d.t.fsText
-                    font.bold: true
+                    font.bold: !mrow.isNone
                     elide: Text.ElideRight
                     width: Math.min(implicitWidth, parent.width - d.t.sp(90))
                     anchors.verticalCenter: parent.verticalCenter
@@ -860,7 +932,7 @@ DialogFrame {
                     StatusTip { app: d.app; ws: d.ws; status: mrow.status; area: mrowMa }
                   }
                   Text {
-                    visible: !mrow.isAdd && d.ws && mrow.modelData.id === d.ws.me.id
+                    visible: mrow.person && d.ws && mrow.modelData.id === d.ws.me.id
                     text: d.app.tr("(you)", "(você)")
                     color: d.t.fgDim
                     font.family: d.t.font
@@ -881,7 +953,7 @@ DialogFrame {
                   width: parent.width
                   elide: Text.ElideRight
                   text: mrow.confirming ? d.app.tr("Remove from ", "Remover de ") + d.hashName + "?"
-                      : mrow.isAdd ? "" : (mrow.u ? (mrow.u.title || (mrow.u.real && mrow.u.real !== mrow.u.name ? mrow.u.real : "")) : "")
+                      : !mrow.person ? "" : (mrow.u ?(mrow.u.title || (mrow.u.real && mrow.u.real !== mrow.u.name ? mrow.u.real : "")) : "")
                   textFormat: Text.PlainText
                   color: mrow.confirming ? d.t.red : d.t.fgDim
                   font.family: d.t.font
@@ -891,6 +963,7 @@ DialogFrame {
 
               MouseArea {
                 id: mrowMa
+                enabled: !mrow.isHead && !mrow.isNone
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
@@ -915,6 +988,19 @@ DialogFrame {
                 onClicked: d.memberMenu(moreBtn, mrow.modelData.id)
               }
 
+              SButton {
+                id: addToChanBtn
+                visible: mrow.outside
+                anchors.right: parent.right
+                anchors.rightMargin: d.t.sp(10)
+                anchors.verticalCenter: parent.verticalCenter
+                app: d.app
+                small: true
+                text: d.busy === "add:" + mrow.modelData.id ? d.app.tr("Adding…", "Adicionando…") : d.app.tr("Add to Channel", "Adicionar ao canal")
+                enabled2: d.busy === ""
+                onClicked: d.addOne(mrow.modelData.id)
+              }
+
               Row {
                 id: kickRow
                 visible: mrow.confirming
@@ -937,7 +1023,7 @@ DialogFrame {
           }
 
           Text {
-            visible: d.membersLoaded && d.memberRows.filter(function(r) { return r.kind === "user" }).length === 0 && search.text.trim() !== ""
+            visible: d.membersLoaded && !d.canAdd && d.memberRows.filter(function(r) { return r.kind === "user" }).length === 0 && search.text.trim() !== ""
             anchors.centerIn: memberList
             text: d.app.tr("No one found", "Ninguém encontrado")
             color: d.t.fgDim
