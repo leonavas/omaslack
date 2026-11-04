@@ -27,3 +27,9 @@ An install made by `omarchy plugin add` (a git folder in Omarchy's plugin folder
 A checkout (a symlink in Omarchy's plugin folder to a clone of this repo, with the plugin at its top) updates from the app with `git -C <folder> pull --ff-only` instead of `omarchy plugin update`, after a confirm of its own (`gum confirm`, else a plain y/N). A failure, such as local changes in the way or a branch that can't fast-forward, shows git's message and changes nothing. A copy that isn't in git can't be updated from the app; the button tells you where to get the new version.
 
 The background check reads the setting `checkUpdates` (default on; "Check for updates" in Preferences → Advanced). The account menu's **Check for updates** works either way, and `SLACKQS_UPDATE_DEV=1` makes it find a "new" version.
+
+## Offline security regressions
+
+Run `bash tests/run-security.sh` when changing download staging, preview URL policy, notification arguments or the login result protocol. It needs Bubblewrap, Python, Qt's QML runtime and Bash already installed; it does not install dependencies or build the app.
+
+The runner disables networking, exposes the relevant source and tools read-only, uses an empty allowlisted environment and a private 64 MiB scratch tmpfs, and limits CPU, memory, processes, file size and elapsed time. It uses dummy files/accounts, recording network/process doubles and Qt's JavaScript engine. It does not sign in to Slack or use the desktop's notification service. A missing sandbox capability is a failure, not permission to run the tests on the live desktop.

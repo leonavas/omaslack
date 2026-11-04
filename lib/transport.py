@@ -10,7 +10,7 @@ JSON lines:
   stdin   {"id": 7, "op": "call", "method": "auth.test", "params": {...}}
   stdout  {"id": 7, "ok": true, "status": 200, "body": {...}}
 
-Ops: creds, call, download, video_frame, stream, post_file, cancel, multipart, read_cookie, write_private,
+Ops: creds, call, download, video_frame, stream, post_file, cancel, multipart, login_challenge, read_cookie, write_private,
 secret_store, secret_lookup, secret_clear, sweep, ws_open, ws_send, ws_close. Socket
 traffic comes back unprompted as
 {"ws": "open"}, {"ws": "msg", "data": {...}}, {"ws": "closed", "reason": ...}.
@@ -75,6 +75,20 @@ def emit(obj):
 def is_slack(host):
     host = (host or "").lower()
     return host == "slack.com" or host.endswith(".slack.com")
+
+
+def download_host(url, slack_images_only=False):
+    """Validate the actual authority before reuse and at every redirect."""
+    if not isinstance(url, str) or any(ord(c) <= 32 or ord(c) == 127 or c == "\\" for c in url):
+        raise ValueError("invalid download URL")
+    u = urllib.parse.urlsplit(url)
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or not host or u.username is not None or u.password is not None or u.port not in (None, 443):
+        raise ValueError("download URL must be HTTPS without userinfo on port 443")
+    if slack_images_only and not any(host == domain or host.endswith("." + domain)
+                                     for domain in ("slack.com", "slack-edge.com", "slack-imgs.com")):
+        raise ValueError("external preview images are disabled")
+    return host
 
 
 def auth_headers():
@@ -287,6 +301,8 @@ def op_download(msg):
     url = msg["url"]
     dest = msg["dest"]
     cache = not msg.get("no_clobber")
+    slack_images_only = bool(msg.get("slack_images_only"))
+    download_host(url, slack_images_only)
     # `reuse`: a file already in the cache is used again, and its
     # modification time becomes its last use, so what keeps being looked at
     # never expires (the plugin deletes what's a week unseen).
@@ -310,40 +326,41 @@ def op_download(msg):
             if now - last[0] >= 0.2:
                 last[0] = now
                 emit({"id": msg.get("id"), "progress": done, "total": total})
-    for _ in range(6):
-        u = urllib.parse.urlsplit(url)
-        headers = auth_headers() if is_slack(u.hostname) else {}
-        tmp = dest + ".part"
-        hold(tmp)
-        try:
-            with open(tmp, "wb") as f:
+    # Reserve a private, unique staging inode. A sender's filename must
+    # never select an existing sibling (including another download).
+    fd, tmp = tempfile.mkstemp(prefix=".omaslack-", suffix=".part", dir=os.path.dirname(dest))
+    hold(tmp)
+    try:
+        with os.fdopen(fd, "w+b") as f:
+            for _ in range(6):
+                host = download_host(url, slack_images_only)
+                headers = auth_headers() if is_slack(host) else {}
                 status, rh, data = request("GET", url, None, headers, stream_to=f, progress=report)
-        except Exception as e:
-            release(tmp)
-            return {"ok": False, "error": str(e)}
-        release(tmp)
-        if status in (301, 302, 303, 307, 308) and rh.get("location"):
-            url = urllib.parse.urljoin(url, rh["location"])
-            continue
-        if status != 200:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            return {"ok": False, "error": "http %d" % status}
-        mime = rh.get("content-type", "")
-        if mime.startswith("text/html") and not msg.get("html_ok"):
-            os.unlink(tmp)
-            return {"ok": False, "error": "html"}
-        # `no_clobber` (a save to Downloads): a file already there stays, and
-        # this one becomes "name (1).ext", "name (2).ext"…
+                if status in (301, 302, 303, 307, 308) and rh.get("location"):
+                    url = urllib.parse.urljoin(url, rh["location"])
+                    continue
+                if status != 200:
+                    return {"ok": False, "error": "http %d" % status}
+                mime = rh.get("content-type", "")
+                if mime.startswith("text/html") and not msg.get("html_ok"):
+                    return {"ok": False, "error": "html"}
+                break
+            else:
+                return {"ok": False, "error": "redirects"}
         if not cache:
             dest = free_name(dest)
         os.replace(tmp, dest)
         if cache:
             hold(dest)
         return {"ok": True, "path": dest, "mime": mime}
-    return {"ok": False, "error": "redirects"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        release(tmp)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 # A video's cover: a frame from its first second, blurred, without the whole
@@ -539,7 +556,7 @@ def free_name(dest):
     while True:
         cand = dest if n == 0 else "%s (%d)%s" % (stem, n, ext)
         try:
-            os.close(os.open(cand, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+            os.close(os.open(cand, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
             return cand
         except FileExistsError:
             n += 1
@@ -1031,6 +1048,7 @@ def op_ws_close(msg):
 
 
 OPS = {
+    "login_challenge": lambda msg: {"ok": True, "challenge": secrets.token_hex(32)},
     "call": op_call,
     "download": op_download,
     "video_frame": op_video_frame,

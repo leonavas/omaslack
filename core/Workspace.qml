@@ -2439,29 +2439,32 @@ Item {
   property var downloads: ({})        // url → {done, total} (bytes; total 0 when not known)
   property int downloadsRev: 0
   function downloadState(url) { root.downloadsRev; return root.downloads[url] || null }
-  function fetchFile(url, name, cb, track) {
+  function fetchFile(url, name, cb, track, slackImagesOnly) {
     if (!url) return ""
     if (root.localFiles[url]) { root.keepLocal(url, root.localFiles[url]); return root.localFiles[url] }
-    var waiting = root._fetching[url]
+    // A restricted preview must not join an unrestricted file request
+    // that may follow a redirect to an external host.
+    var requestKey = slackImagesOnly ? "slack-preview:" + url : url
+    var waiting = root._fetching[requestKey]
     if (waiting) { if (cb) waiting.push(cb); return "" }
-    root._fetching[url] = cb ? [cb] : []
+    root._fetching[requestKey] = cb ? [cb] : []
     var safe = String(name || "file").replace(/[\/\x00-\x1f]/g, "_").slice(-80)
     var hash = Qt.md5(url).slice(0, 16)
     var dest = root.cacheDir + "/files/" + root.teamId + "/" + hash + "-" + safe
     if (track) { root.downloads[url] = { done: 0, total: 0 }; root.downloadsRev++ }
     wire.download(url, dest, function(r) {
-      var cbs = root._fetching[url] || []
-      delete root._fetching[url]
+      var cbs = root._fetching[requestKey] || []
+      delete root._fetching[requestKey]
       if (root.downloads[url]) { delete root.downloads[url]; root.downloadsRev++ }
       if (r.ok) { root.keepLocal(url, r.path); root.filesRev++ }
       for (var i = 0; i < cbs.length; i++) {
         try { cbs[i](r.ok ? r.path : "") } catch (e) { console.warn("omaslack: fetchFile callback failed:", e) }
       }
     }, false, true, false, track ? function(done, total) {
-      if (!root._fetching[url]) return
+      if (!root._fetching[requestKey]) return
       root.downloads[url] = { done: done, total: total }
       root.downloadsRev++
-    } : null)
+    } : null, !!slackImagesOnly)
     return ""
   }
 

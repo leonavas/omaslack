@@ -825,6 +825,8 @@ Item {
   property string loginError: ""
   property string loginStatus: ""
   property var _loginResult: null
+  property string _loginChallenge: ""
+  property int _loginAttempt: 0
   // Its cookies and storage hold the sessions: in the runtime dir, never on
   // disk (transport.py's op_read_cookie looks for it in the same place).
   readonly property string webProfile: (root.runDir || root.dataDir) + "/webview"
@@ -862,20 +864,41 @@ Item {
     root.loginError = ""
     root.loginStatus = root.tr("Sign in to Slack in the window that opened…", "Entre no Slack na janela que abriu…")
     root._loginResult = null
+    root._loginChallenge = ""
+    root.loginRunning = true
+    var attempt = ++root._loginAttempt
     var known = root.accounts.map(function(a) { return a.teamId }).join(",")
     var qml = root.pluginDir + "/login/Login.qml"
-    loginProc.command = ["bash", "-c", 'unset QTWEBENGINE_DISABLE_SANDBOX; bin=$(command -v qml6 || true); [ -x "$bin" ] || bin=/usr/lib/qt6/bin/qml; [ -x "$bin" ] || bin=$(command -v qml); exec "$bin" "$@"',
-                         "qml", qml, "--", root.webProfile, known, root.lang, String(workspace || "").trim(), root.webCache, U.chromeUa()]
-    root.loginRunning = true
-    loginProc.running = true
+    utilWire.loginChallenge(function(r) {
+      if (attempt !== root._loginAttempt || !root.loginRunning) return
+      if (!r.ok || !/^[a-f0-9]{64}$/.test(r.challenge || "")) {
+        root.loginRunning = false
+        root.loginStatus = ""
+        root.loginError = root.tr("Couldn't securely start sign-in. Try again.", "Não foi possível iniciar o login com segurança. Tente novamente.")
+        return
+      }
+      root._loginChallenge = r.challenge
+      loginProc.command = ["bash", "-c", 'unset QTWEBENGINE_DISABLE_SANDBOX; bin=$(command -v qml6 || true); [ -x "$bin" ] || bin=/usr/lib/qt6/bin/qml; [ -x "$bin" ] || bin=$(command -v qml); exec "$bin" "$@"',
+                           "qml", qml, "--", root.webProfile, known, root.lang, String(workspace || "").trim(), root.webCache, U.chromeUa(), r.challenge]
+      loginProc.running = true
+    })
   }
 
-  function cancelLogin() { if (loginProc.running) loginProc.signal(15) }
+  function cancelLogin() {
+    root._loginAttempt++
+    root._loginChallenge = ""
+    root._loginResult = null
+    if (loginProc.running) loginProc.signal(15)
+    else { root.loginRunning = false; root.loginStatus = "" }
+  }
 
   function loginLine(line) {
-    var at = line.indexOf("SLACKQS-RESULT ")
-    if (at >= 0) {
-      try { root._loginResult = JSON.parse(line.slice(at + 15)) } catch (e) {}
+    if (line.indexOf("SLACKQS-RESULT ") >= 0) {
+      var result = U.loginResult(line, root._loginChallenge)
+      if (result && root.loginRunning && loginProc.running) {
+        root._loginResult = result
+        root._loginChallenge = ""
+      }
       return
     }
     if (line.indexOf("SLACKQS-STATUS ") >= 0) root.loginStatus = line.slice(line.indexOf("SLACKQS-STATUS ") + 15)
@@ -884,6 +907,9 @@ Item {
 
   function loginExited(code) {
     var res = root._loginResult
+    root._loginResult = null
+    root._loginChallenge = ""
+    var attempt = root._loginAttempt
     if (!res || !res.token) {
       root.loginRunning = false
       root.loginStatus = ""
@@ -892,6 +918,7 @@ Item {
     }
     root.loginStatus = root.tr("Checking the session…", "Conferindo a sessão…")
     utilWire.readCookie(root.webProfile + "/Cookies", function(r) {
+      if (attempt !== root._loginAttempt) return
       if (!r.ok || !r.cookie) {
         root.loginRunning = false
         root.loginStatus = ""
@@ -899,11 +926,12 @@ Item {
         return
       }
       root.checkSession(res.token, r.cookie, function(err) {
+        if (attempt !== root._loginAttempt) return
         root.loginRunning = false
         root.loginStatus = ""
         if (err) root.loginError = err
         else root.shareCookie(res.team, r.cookie)
-      })
+      }, function() { return attempt === root._loginAttempt })
     })
   }
 
@@ -939,7 +967,7 @@ Item {
   }
 
   // auth.test with these credentials; on success the workspace is added.
-  function checkSession(token, cookie, cb) {
+  function checkSession(token, cookie, cb, stillCurrent) {
     token = String(token || "").trim()
     cookie = String(cookie || "").trim()
     if (token.indexOf("xox") !== 0) { cb(root.tr("The token starts with xoxc- or xoxp-.", "O token começa com xoxc- ou xoxp-.")); return }
@@ -947,6 +975,7 @@ Item {
     var probe = probeComponent.createObject(root, { token: token, cookie: cookie })
     probe.call("auth.test", {}, function(r) {
       probe.destroy()
+      if (stillCurrent && !stillCurrent()) return
       if (!r.ok || !r.body || !r.body.ok) {
         var err = r.ok ? (r.body && r.body.error) || "?" : r.error
         cb(err === "invalid_auth" || err === "not_authed"
@@ -1045,7 +1074,7 @@ Item {
       + 'fi; '
       + 'exec notify-send "--icon=$icon" "$@"',
       "slack-notify", file, url, root.appIcon, drawn,
-      "--app-name=Slack", "--hint=string:omarchy-exec-argv:" + JSON.stringify(open), title, body])
+      "--app-name=Slack", "--hint=string:omarchy-exec-argv:" + JSON.stringify(open), "--", title, body])
   }
 
   // ---------------------------------------------------------------- photos

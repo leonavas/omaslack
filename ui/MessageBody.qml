@@ -41,24 +41,24 @@ Column {
     body.app.openUrl(url)
   }
 
-  function hostOf(url) { return ((String(url || "").match(/^https?:\/\/([^\/:?#]+)/i) || [])[1] || "").toLowerCase() }
   // Pictures from other sites (link previews, apps' images) load straight
   // from them, so they only show while Preferences lets them
   // (app.previewImages); Slack's own (files, emoji, its image proxy) always.
   function shows(url) {
     if (!url) return false
-    return body.app.previewImages || /(^|\.)(slack\.com|slack-edge\.com|slack-imgs\.com)$/.test(body.hostOf(url))
+    if (body.app.demo && /^data:image\//.test(url)) return true
+    var host = U.previewHost(url)
+    return !!host && (body.app.previewImages || U.slackImageHost(host))
   }
 
   function imageSource(url) {
-    if (!url) return ""
-    var host = body.hostOf(url)
-    if (host === "slack.com" || /\.slack\.com$/.test(host)) {
-      var local = body.ws.localFile(url)
-      if (!local) Qt.callLater(function() { body.ws.fetchFile(url, "image") })
-      return local ? "file://" + local : ""
-    }
-    return body.shows(url) ? url : ""
+    if (!body.shows(url)) return ""
+    if (body.app.demo && /^data:image\//.test(url)) return url
+    var local = body.ws.localFile(url)
+    if (!local) Qt.callLater(function() {
+      if (body.shows(url)) body.ws.fetchFile(url, "image", null, false, !body.app.previewImages)
+    })
+    return local ? "file://" + local : ""
   }
 
   Repeater {

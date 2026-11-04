@@ -137,7 +137,7 @@ Every host Omaslack connects to:
 | `raw.githubusercontent.com/leonavas/omaslack` | The update check (one plain file; **Check for updates** in Preferences → Advanced turns it off) |
 | `github.com` | Only when you start an update: Omarchy fetches the new version and shows its changes before you confirm |
 
-Your credentials only go to `slack.com` and its subdomains; requests to every other host carry none. There's no telemetry and no analytics, and nothing is downloaded to run: no binaries, no packages.
+Your credentials only go to `slack.com` and its subdomains; requests to every other host carry none. Message preview images use HTTPS on port 443 without URL userinfo. Their downloads enforce the preview preference at every redirect, including Slack CDN redirects. There's no telemetry and no analytics, and nothing is downloaded to run: no binaries, no packages.
 
 ## Data stored
 

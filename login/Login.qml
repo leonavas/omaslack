@@ -8,7 +8,7 @@ import QtWebEngine
 // the browser profile (in the session's runtime dir, a tmpfs) keeps the
 // HttpOnly `d` cookie for the plugin.
 //
-//   qml Login.qml -- <profile dir> <known team ids,…> <lang> <workspace or ""> [cache dir] [user agent]
+//   qml Login.qml -- <profile dir> <known team ids,…> <lang> <workspace or ""> <cache dir> <user agent> <result challenge>
 //
 // The HTTP cache goes to <cache dir> (Qt's default is under
 // ~/.cache/<app>/QtWebEngine/), which the plugin empties once the window
@@ -33,6 +33,10 @@ Window {
   readonly property string workspace: String(args[3] || "").replace(/[^A-Za-z0-9-]/g, "")
   readonly property string cacheDir: String(args[4] || "")
   readonly property string givenUa: String(args[5] || "").replace(/[^\x20-\x7e]/g, "").trim()
+  // Only native QML knows this per-attempt secret. Never put it in a page
+  // script, URL, browser storage or JavaScript/native bridge.
+  readonly property string resultChallenge: /^[a-f0-9]{64}$/.test(args[6] || "") ? args[6] : ""
+  property int navigationSerial: 0
   property bool done: false
 
   title: pt ? "Entrar no Slack" : "Sign in to Slack"
@@ -85,6 +89,9 @@ Window {
       id: view
       profile: proto.instance()
       url: win.startUrl
+      // Page console output is untrusted and is not part of our native
+      // result/status protocol. QML's own console still reaches the parent.
+      onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {}
 
       // slack:// would launch the desktop app: that workspace opens in the
       // web client here instead, where its session is taken.
@@ -103,6 +110,7 @@ Window {
         if (/^https?:\/\//i.test(u)) view.url = u
       }
       onUrlChanged: {
+        win.navigationSerial++
         var u = String(view.url)
         // After signing in Slack lands on /ssb/redirect, which wants the
         // desktop app; go on to the web client.
@@ -127,18 +135,19 @@ Window {
     running: loader.item !== null && !win.done
     onTriggered: {
       var view = loader.item
-      if (String(view.url).indexOf("https://app.slack.com/") !== 0) return
+      if (!win.resultChallenge || String(view.url).indexOf("https://app.slack.com/") !== 0) return
+      var navigation = win.navigationSerial
       var known = JSON.stringify(win.known)
-      view.runJavaScript("(function(){try{var known=" + known + ";var cfg=JSON.parse(localStorage.getItem('localConfig_v2')||'null');" +
+      view.runJavaScript("(function(){try{if(location.origin!=='https://app.slack.com')return '';var known=" + known + ";var cfg=JSON.parse(localStorage.getItem('localConfig_v2')||'null');" +
         "if(!cfg||!cfg.teams)return '';var m=location.pathname.match(/\\/client\\/(T[A-Z0-9]+)/);" +
         "var all=Object.keys(cfg.teams).map(function(k){return cfg.teams[k]}).filter(function(t){return t&&t.id&&t.token});" +
         "var fresh=all.filter(function(t){return known.indexOf(t.id)<0});var named=m&&cfg.teams[m[1]];" +
         "var team=(named&&known.indexOf(named.id)<0?named:null)||(fresh.length===1?fresh[0]:null);if(!team||!team.token)return '';" +
         "return JSON.stringify({token:team.token,team:team.id})}catch(e){return ''}})()",
         function(result) {
-          if (!result || win.done) return
+          if (!result || win.done || navigation !== win.navigationSerial || String(view.url).indexOf("https://app.slack.com/") !== 0) return
           win.done = true
-          console.log("SLACKQS-RESULT " + result)
+          console.log("SLACKQS-RESULT " + win.resultChallenge + " " + result)
           // The browser writes its cookies when the profile closes.
           quit.start()
         })

@@ -79,8 +79,8 @@ Item {
   // `reuse`: a file already at `dest` is kept (and marked as just used).
   // `noClobber`: one already there stays; this one gets "name (1).ext"…
   // `onProgress(done, total)`: as it arrives (total 0 when not known).
-  function download(url, dest, cb, htmlOk, reuse, noClobber, onProgress) {
-    var id = _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse, no_clobber: !!noClobber, progress: !!onProgress }, cb)
+  function download(url, dest, cb, htmlOk, reuse, noClobber, onProgress, slackImagesOnly) {
+    var id = _request({ op: "download", url: url, dest: dest, html_ok: !!htmlOk, reuse: !!reuse, no_clobber: !!noClobber, progress: !!onProgress, slack_images_only: !!slackImagesOnly }, cb)
     if (onProgress) root._progress[id] = onProgress
     return id
   }
@@ -102,6 +102,7 @@ Item {
     return _request({ op: "multipart", method: method, fields: fields || {}, path: path || "", field: field || "file", mime: mime || "" }, cb)
   }
   function readCookie(db, cb) { return _request({ op: "read_cookie", db: db }, cb) }
+  function loginChallenge(cb) { return _request({ op: "login_challenge" }, cb) }
   // A file of the config dir, 0600 from the start and replaced in one step.
   function writePrivate(name, text, cb) { return _request({ op: "write_private", name: name, text: text }, cb) }
   // A workspace's entry in the system keyring (secret-tool).
