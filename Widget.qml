@@ -523,6 +523,11 @@ BarWidget {
         shadowScale: 1.05
         shadowHorizontalOffset: 0
         shadowVerticalOffset: 0
+        // Omarchy scales the icon by its measured bounds, padding included:
+        // the automatic blur padding shrank the mark to a dot. One pixel is
+        // all the faint edge needs.
+        autoPaddingEnabled: false
+        paddingRect: Qt.rect(1, 1, 1, 1)
       }
     }
   }
@@ -531,8 +536,9 @@ BarWidget {
     id: colorIcon
 
     Image {
-      anchors.fill: parent
-      anchors.margins: parent ? Math.round(parent.width * 0.04) : 0
+      // Sized here: omarchy's icon Loader has no size to fill.
+      width: Style.bar.iconCanvas
+      height: Style.bar.iconCanvas
       fillMode: Image.PreserveAspectFit
       sourceSize.width: Math.round(width * Screen.devicePixelRatio)
       sourceSize.height: Math.round(height * Screen.devicePixelRatio)
