@@ -491,30 +491,27 @@ BarWidget {
   }
 
   // The white mark over its own silhouette, darkened and blurred a little:
-  // the faint edge that keeps it readable on a light bar.
+  // the faint edge that keeps it readable on a light bar. The edge is the
+  // Image's layer effect, not a sibling: Omarchy 4.5 scales an icon by the
+  // bounds of the items it holds, and an effect item with its blur padding
+  // counted as ink and shrank the mark.
   Component {
     id: outlineIcon
 
-    Item {
+    Image {
+      // Sized here: omarchy's icon Loader has no size to fill.
+      width: Style.bar.iconCanvas
+      height: Style.bar.iconCanvas
       opacity: root.markOpacity
-
-      Image {
-        id: outlineImage
-        anchors.fill: parent
-        anchors.margins: Math.round(parent.width * 0.04)
-        fillMode: Image.PreserveAspectFit
-        // Decode at physical pixels: the logical size leaves it blurry on HiDPI.
-        sourceSize.width: Math.round(width * Screen.devicePixelRatio)
-        sourceSize.height: Math.round(height * Screen.devicePixelRatio)
-        source: root.monoIconSource
-        smooth: true
-        visible: false
-        layer.enabled: true
-      }
-
-      MultiEffect {
-        anchors.fill: outlineImage
-        source: outlineImage
+      fillMode: Image.PreserveAspectFit
+      // Decode at physical pixels: the logical size leaves it blurry on HiDPI.
+      sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+      sourceSize.height: Math.round(height * Screen.devicePixelRatio)
+      source: root.monoIconSource
+      smooth: true
+      layer.enabled: true
+      layer.smooth: true
+      layer.effect: MultiEffect {
         shadowEnabled: true
         shadowColor: "#000000"
         shadowOpacity: 0.7
@@ -523,11 +520,6 @@ BarWidget {
         shadowScale: 1.05
         shadowHorizontalOffset: 0
         shadowVerticalOffset: 0
-        // Omarchy scales the icon by its measured bounds, padding included:
-        // the automatic blur padding shrank the mark to a dot. One pixel is
-        // all the faint edge needs.
-        autoPaddingEnabled: false
-        paddingRect: Qt.rect(1, 1, 1, 1)
       }
     }
   }
