@@ -4,8 +4,9 @@ import "../lib/Util.js" as U
 import "../lib/Emoji.js" as Emoji
 
 // "Set a status": the emoji button and the text (100 characters), Slack's
-// five suggestions, when it clears itself, Save; "Clear status" while one is
-// set. Opens with your current status filled in.
+// five suggestions, when it clears itself (a preset or a day and time you
+// pick), Save; "Clear status" while one is set. Opens with your current
+// status filled in.
 DialogFrame {
   id: d
   title: app.tr("Set a status", "Definir um status")
@@ -16,6 +17,16 @@ DialogFrame {
   property string emoji: ""        // Slack name, no colons
   property string unicodeGlyph: "" // a status set elsewhere with a unicode emoji only
   property string clearAfter: "never"
+  // "custom": a day (0 = today … 13) and a time of day in minutes.
+  property int customDay: 0
+  property int customMin: -1
+  property bool customTimeOk: true
+  property real now: Date.now()
+  readonly property int customExp: d.customMin < 0 ? 0 : Math.floor(d.customDate(d.customDay, d.customMin).getTime() / 1000)
+  readonly property bool customOk: d.customTimeOk && d.customExp * 1000 > d.now
+  readonly property bool canSave: d.clearAfter !== "custom" || d.customOk
+
+  Timer { interval: 30000; running: d.clearAfter === "custom"; repeat: true; onTriggered: d.now = Date.now() }
 
   readonly property var presets: [
     { emoji: "date", en: "In a meeting", pt: "Em reunião", after: "1h" },
@@ -33,6 +44,7 @@ DialogFrame {
     out.push({ value: "4h", label: d.app.tr("4 hours", "4 horas") })
     out.push({ value: "today", label: d.app.tr("Today", "Hoje") })
     out.push({ value: "week", label: d.app.tr("This week", "Esta semana") })
+    out.push({ value: "custom", label: d.app.tr("Date and time", "Data e hora"), menu: d.app.tr("Choose date and time…", "Escolher data e hora…") })
     return out
   }
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
@@ -48,7 +60,67 @@ DialogFrame {
     if (v === "4h") return now + 4 * 3600
     if (v === "today") return U.endOfToday()
     if (v === "week") return U.endOfWeek()
+    if (v === "custom") return d.customExp
     return 0
+  }
+
+  function customDate(day, min) {
+    var n = new Date()
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate() + day, Math.floor(min / 60), min % 60, 0)
+  }
+  function dayName(i) {
+    if (i === 0) return d.app.tr("Today", "Hoje")
+    if (i === 1) return d.app.tr("Tomorrow", "Amanhã")
+    var x = d.customDate(i, 0), pt = d.app.lang === "pt-BR"
+    var wd = d.cap((pt ? U.DAYS_PT : U.DAYS_EN)[x.getDay()].slice(0, 3))
+    return pt ? wd + ", " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0")
+              : wd + ", " + U.MON_EN[x.getMonth()] + " " + x.getDate()
+  }
+  function timeText(min) { return U.time(new Date(2000, 0, 1, Math.floor(min / 60), min % 60), d.app.clock24) }
+  // "17:30", "1730", "17h30", "9", "5:30 pm", "5pm" → minutes of the day; -1 if not a time.
+  function parseTime(s) {
+    var m = String(s).trim().toLowerCase().match(/^(\d{1,2})(?:[:h.]?(\d{2}))?\s*(?:(a|p)\.?\s*m?\.?)?$/)
+    if (!m) return -1
+    var h = Number(m[1]), mi = m[2] ? Number(m[2]) : 0
+    if (mi > 59) return -1
+    if (m[3]) { if (h < 1 || h > 12) return -1; h = h % 12 + (m[3] === "p" ? 12 : 0) }
+    else if (h > 23) return -1
+    return h * 60 + mi
+  }
+  // First time "custom" is picked: the current status' expiry if it's within
+  // two weeks, else the next full hour.
+  function startCustom() {
+    if (d.customMin < 0) {
+      var exp = d.current && d.current.exp > 0 ? new Date(d.current.exp * 1000) : null
+      var ahead = exp ? -U.dayDiff(exp, new Date()) : -1
+      if (exp && ahead >= 0 && ahead <= 13) { d.customDay = ahead; d.customMin = exp.getHours() * 60 + exp.getMinutes() }
+      else {
+        var n = new Date(), next = n.getHours() + 1
+        d.customDay = next >= 24 ? 1 : 0
+        d.customMin = (next % 24) * 60
+      }
+      timeField.text = d.timeText(d.customMin)
+      d.customTimeOk = true
+    }
+    d.now = Date.now()
+    d.clearAfter = "custom"
+    Qt.callLater(function() { timeField.forceActiveFocus(); timeField.selectAll() })
+  }
+  function stepTime(delta) {
+    var base = d.customTimeOk ? d.customMin : 0
+    var m = Math.floor(base / 15) * 15 + (base % 15 && delta < 0 ? 15 : 0) + delta
+    if (m < 0) { if (d.customDay > 0) { d.customDay--; m += 1440 } else m = 0 }
+    if (m >= 1440) { if (d.customDay < 13) { d.customDay++; m -= 1440 } else m = 1439 }
+    d.customMin = m
+    d.customTimeOk = true
+    timeField.text = d.timeText(m)
+  }
+  function dayMenu() {
+    var items = []
+    for (var i = 0; i < 14; i++) (function(i) {
+      items.push({ label: d.dayName(i), checked: i === d.customDay, action: function() { d.customDay = i } })
+    })(i)
+    d.win.menuAt(dayBtn, items, 0, dayBtn.height + d.t.sp(4))
   }
 
   Component.onCompleted: {
@@ -69,7 +141,7 @@ DialogFrame {
     field.cursorPosition = field.length
   }
   function save() {
-    if (!d.ws) return
+    if (!d.ws || !d.canSave) return
     var text = field.text.trim().slice(0, 100)
     var name = d.emoji || (d.unicodeGlyph ? Emoji.shortcodeOf(d.unicodeGlyph) : "")
     if (!name && !text) d.ws.setStatus("", "", 0)
@@ -79,7 +151,8 @@ DialogFrame {
   function clearStatus() { if (d.ws) d.ws.setStatus("", "", 0); d.closed() }
   function afterMenu() {
     d.win.menuAt(afterBtn, d.afterOptions.map(function(o) {
-      return { label: o.label, checked: o.value === d.clearAfter, action: function() { d.clearAfter = o.value } }
+      return { label: o.menu || o.label, checked: o.value === d.clearAfter,
+               action: function() { if (o.value === "custom") d.startCustom(); else d.clearAfter = o.value } }
     }), 0, afterBtn.height + d.t.sp(4))
   }
   function pickEmoji() {
@@ -216,6 +289,81 @@ DialogFrame {
       }
     }
 
+    // A day and time of your own.
+    Row {
+      visible: d.clearAfter === "custom"
+      spacing: d.t.sp(10)
+      Rectangle {
+        id: dayBtn
+        anchors.verticalCenter: parent.verticalCenter
+        width: dayRow.implicitWidth + d.t.sp(24)
+        height: d.t.sp(32)
+        radius: Math.max(4, d.t.radiusSmall)
+        color: dma.containsMouse ? d.t.hover : "transparent"
+        border.width: 1
+        border.color: d.t.lineStrong
+        Row {
+          id: dayRow
+          anchors.centerIn: parent
+          spacing: d.t.sp(8)
+          Glyph { app: d.app; anchors.verticalCenter: parent.verticalCenter; icon: "󰃭"; size: d.t.fsSmall; color: d.t.fgDim }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: d.dayName(d.customDay)
+            color: d.t.fg
+            font.family: d.t.font
+            font.pixelSize: d.t.fsText - 1
+          }
+          Glyph { app: d.app; anchors.verticalCenter: parent.verticalCenter; icon: "󰅀"; size: d.t.fsSmall; color: d.t.fgDim }
+        }
+        MouseArea {
+          id: dma
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: d.dayMenu()
+        }
+      }
+      SField {
+        id: timeField
+        app: d.app
+        anchors.verticalCenter: parent.verticalCenter
+        width: d.t.sp(d.app.clock24 ? 84 : 110)
+        height: d.t.sp(32)
+        topPadding: 0
+        bottomPadding: 0
+        verticalAlignment: TextInput.AlignVCenter
+        horizontalAlignment: TextInput.AlignHCenter
+        font.pixelSize: d.t.fsText - 1
+        maximumLength: 10
+        placeholderText: d.app.clock24 ? "17:30" : "5:30 PM"
+        onTextEdited: {
+          var m = d.parseTime(text)
+          d.customTimeOk = m >= 0
+          if (m >= 0) d.customMin = m
+          d.now = Date.now()
+        }
+        onEditingFinished: if (d.customTimeOk) text = d.timeText(d.customMin)
+        onAccepted: d.save()
+        Keys.onPressed: event => {
+          if (event.key === Qt.Key_Up) d.stepTime(15)
+          else if (event.key === Qt.Key_Down) d.stepTime(-15)
+          else return
+          event.accepted = true
+        }
+        PanelToolTip { visible: timeField.hovered && !timeField.activeFocus; text: d.app.tr("Type a time (↑ ↓ change it by 15 minutes)", "Digite um horário (↑ ↓ mudam de 15 em 15 minutos)") }
+      }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: !d.customTimeOk ? d.app.tr("Not a valid time", "Horário inválido")
+              : !d.customOk ? d.app.tr("Pick a time in the future", "Escolha um horário no futuro")
+              : d.cap(U.untilLabel(d.customExp, d.app.lang, d.app.clock24))
+        color: d.customOk ? d.t.fgDim : d.t.red
+        font.family: d.t.font
+        font.pixelSize: d.t.fsSmall
+      }
+    }
+
     // Slack's suggestions.
     Column {
       width: parent.width
@@ -279,7 +427,7 @@ DialogFrame {
       anchors.right: parent.right
       spacing: d.t.sp(10)
       SButton { app: d.app; text: d.app.tr("Cancel", "Cancelar"); onClicked: d.closed() }
-      SButton { app: d.app; kind: "primary"; text: d.app.tr("Save", "Salvar"); onClicked: d.save() }
+      SButton { app: d.app; kind: "primary"; text: d.app.tr("Save", "Salvar"); enabled2: d.canSave; onClicked: d.save() }
     }
   }
 }
