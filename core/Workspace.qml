@@ -2096,7 +2096,11 @@ Item {
     local.pending = true
     var key = conv + "/" + (opts.threadTs || "")
     root.addLocal(conv, opts.threadTs, local)
+    // Behind an upload still on its way: it waits its turn (_outbox).
+    var turn = root._outbox[key] && root._outbox[key].length ? root.queueSend(key, post) : null
+    function settle() { if (turn) turn.finish() }
     function done(b) {
+      settle()
       var m = Model.parseMessage(b.message || {})
       if (!m.ts) m.ts = b.ts || local.ts
       root.dropLocal(conv, local.ts, opts.threadTs)
@@ -2118,13 +2122,38 @@ Item {
       if (root.app) root.app.setTeamSetting(root.teamId, "sentLog", log)
       root.markRead(conv, true)
     }
-    root.api("chat.postMessage", params, done, function(err) {
-      if (["invalid_blocks", "invalid_blocks_format", "invalid_arguments"].indexOf(err) >= 0) {
-        var p2 = U.copy(params); delete p2.blocks
-        root.api("chat.postMessage", p2, done, function(err2) { root.sendFailed(conv, local, opts, typed, err2) })
-      } else root.sendFailed(conv, local, opts, typed, err)
-    })
+    function post() {
+      root.api("chat.postMessage", params, done, function(err) {
+        if (["invalid_blocks", "invalid_blocks_format", "invalid_arguments"].indexOf(err) >= 0) {
+          var p2 = U.copy(params); delete p2.blocks
+          root.api("chat.postMessage", p2, done, function(err2) { settle(); root.sendFailed(conv, local, opts, typed, err2) })
+        } else { settle(); root.sendFailed(conv, local, opts, typed, err) }
+      })
+    }
+    if (!turn) post()
     return true
+  }
+
+  // Messages go out in the order they were sent, per conversation (or
+  // thread). An upload takes its place in line at once, while its bytes go
+  // up; whatever is sent after it (text or another upload) waits until
+  // Slack has posted it, so it doesn't land above the file. With nothing in
+  // line, a text message goes straight out and doesn't queue.
+  property var _outbox: ({})          // conv/threadTs → [{go, ready, state}]
+  function queueSend(key, go) {
+    var item = { go: go || null, ready: !!go, state: "waiting" }
+    item.fire = function(fn) { item.go = fn; item.ready = true; root._pump(key) }
+    item.finish = function() { if (item.state === "done") return; item.state = "done"; root._pump(key) }
+    root._outbox[key] = (root._outbox[key] || []).concat([item])
+    root._pump(key)
+    return item
+  }
+  function _pump(key) {
+    var q = root._outbox[key]
+    while (q && q.length && q[0].state === "done") q.shift()
+    if (!q || !q.length) { delete root._outbox[key]; return }
+    var head = q[0]
+    if (head.state === "waiting" && head.ready) { head.state = "sent"; head.go() }
   }
 
   // Slack's "Schedule for later" (chat.scheduleMessage).
@@ -2337,6 +2366,7 @@ Item {
     var ids = []
     var left = files.length
     var posts = [], off = false
+    var turn = root.queueSend(conv + "/" + (threadTs || ""), null)
     var local = Model.parseMessage({ ts: U.nowTs(), user: root.me.id, text: comment ? Markup.escape(comment) : "", blocks: comment ? Markup.blocks(comment) : [] })
     local.pending = true
     local.files = files.map(function(f, i) {
@@ -2360,6 +2390,7 @@ Item {
     }
     function fail(text) {
       clear()
+      turn.finish()
       root.dropLocal(conv, local.ts, threadTs)
       root.say(text)
       root.restoreText(conv, threadTs, comment)
@@ -2383,6 +2414,11 @@ Item {
     function check() {
       if (--left > 0) return
       if (!ids.length) { fail(root.tr("Upload failed", "O envio falhou")); return }
+      // Bytes up: posted when what was sent before it is in.
+      turn.fire(complete)
+    }
+    function complete() {
+      if (off) return
       // Slack posts it now: too late to call off.
       delete root._uploads[local.ts]
       root.downloadsRev++
@@ -2395,7 +2431,10 @@ Item {
         // The socket's message, matched by text, may have taken the stand-in
         // off: back until those files are in.
         if (!root.uploadArrived(conv, threadTs, fileIds)) root.addLocal(conv, threadTs, local)
-        root._sentUploads = root._sentUploads.concat([{ conv: conv, ts: local.ts, threadTs: threadTs, ids: fileIds, at: Date.now(), polled: Date.now(), clear: clear }])
+        // Slack shares the files a moment after answering: what comes next
+        // waits until the message is in (or a few seconds go by).
+        if (root.uploadArrived(conv, threadTs, fileIds)) turn.finish()
+        root._sentUploads = root._sentUploads.concat([{ conv: conv, ts: local.ts, threadTs: threadTs, ids: fileIds, at: Date.now(), polled: Date.now(), clear: clear, release: turn.finish }])
       }, function(err) { fail(root.errorText(err)) })
     }
   }
@@ -2414,6 +2453,7 @@ Item {
       var now = Date.now(), keep = []
       root._sentUploads.forEach(function(u) {
         var arrived = root.uploadArrived(u.conv, u.threadTs, u.ids)
+        if (arrived || now - u.at > 10000) u.release()
         if (arrived || now - u.at > 60000) {
           u.clear()
           root.dropLocal(u.conv, u.ts, u.threadTs)
