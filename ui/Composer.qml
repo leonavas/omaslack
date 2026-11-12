@@ -744,7 +744,10 @@ Rectangle {
         wrapMode: TextEdit.Wrap
         textFormat: TextEdit.RichText
         color: box.t.fg
-        placeholderText: box.placeholder !== "" ? box.placeholder : box.defaultPlaceholder()
+        // A quote, list or code block on an empty box: its bar / bullet
+        // is already there, so the placeholder would sit on top of it.
+        placeholderText: box.doc.length > 1 || box.doc[0].k !== "p" ? ""
+                         : box.placeholder !== "" ? box.placeholder : box.defaultPlaceholder()
         placeholderTextColor: box.t.fgDim
         selectionColor: box.t.alpha(box.t.accent, 0.35)
         selectedTextColor: box.t.fgBright
