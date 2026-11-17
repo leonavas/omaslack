@@ -16,10 +16,16 @@ Item {
   readonly property string kind: ctl ? ctl.kind : ""
   // A field or select in an input block takes the width it's given.
   property real fill: 0
+  // What was picked here (Workspace.blockPick), shown over what the app sent.
+  property var pick: null
+  readonly property string html: pick && pick.html !== undefined ? pick.html : (ctl ? ctl.html : "")
+  readonly property bool hint: pick && pick.html !== undefined ? false : (ctl ? ctl.placeholder : false)
+  function isOn(o) { return bc.pick && bc.pick.on ? bc.pick.on.indexOf(o.value) >= 0 : !!o.on }
   signal pressed(var ctl, var option)
 
-  implicitWidth: loader.item ? loader.item.implicitWidth : 0
-  implicitHeight: loader.item ? loader.item.implicitHeight : 0
+  // (A positioner's size is its height, not its implicit one.)
+  implicitWidth: loader.item ? Math.max(loader.item.implicitWidth, loader.item.width) : 0
+  implicitHeight: loader.item ? Math.max(loader.item.implicitHeight, loader.item.height) : 0
   width: implicitWidth
   height: implicitHeight
 
@@ -46,7 +52,7 @@ Item {
     Rectangle {
       readonly property string st: bc.ctl.style
       readonly property color fill: st === "primary" ? bc.t.green : st === "danger" ? bc.t.red : "transparent"
-      implicitHeight: bc.t.sp(28)
+      implicitHeight: bc.t.sp(30)
       implicitWidth: Math.max(bc.t.sp(56), btnText.implicitWidth + bc.t.sp(24))
       radius: Math.max(4, bc.t.radiusSmall)
       color: btnMa.pressed ? Qt.darker(fill.a > 0 ? fill : bc.t.hoverStrong, 1.15) : btnMa.containsMouse ? (fill.a > 0 ? Qt.lighter(fill, 1.08) : bc.t.hover) : fill
@@ -69,8 +75,8 @@ Item {
     id: overflowC
     Rectangle {
       id: ov
-      implicitWidth: bc.t.sp(28)
-      implicitHeight: bc.t.sp(28)
+      implicitWidth: bc.t.sp(30)
+      implicitHeight: bc.t.sp(30)
       radius: Math.max(4, bc.t.radiusSmall)
       color: ovMa.containsMouse ? bc.t.hover : "transparent"
       border.width: 1
@@ -86,8 +92,8 @@ Item {
       id: sel
       app: bc.app
       fill: bc.fill
-      html: bc.ctl.html
-      hint: bc.ctl.placeholder
+      html: bc.html
+      hint: bc.hint
       icon: bc.ctl.icon === "date" ? "󰃭" : bc.ctl.icon === "time" ? "󰥔" : ""
       onHit: (bc.ctl.options || []).length ? bc.menu(sel) : bc.pressed(bc.ctl, null)
     }
@@ -97,8 +103,8 @@ Item {
     id: datetimeC
     Row {
       spacing: bc.t.sp(8)
-      BlockBox { app: bc.app; html: bc.ctl.date; hint: bc.ctl.placeholder; icon: "󰃭"; minW: bc.t.sp(170); onHit: bc.pressed(bc.ctl, null) }
-      BlockBox { app: bc.app; html: bc.ctl.time; hint: bc.ctl.placeholder; icon: "󰥔"; minW: bc.t.sp(130); onHit: bc.pressed(bc.ctl, null) }
+      BlockBox { app: bc.app; html: bc.pick ? bc.pick.date : bc.ctl.date; hint: !bc.pick && bc.ctl.placeholder; icon: "󰃭"; minW: bc.t.sp(170); onHit: bc.pressed(bc.ctl, null) }
+      BlockBox { app: bc.app; html: bc.pick ? bc.pick.time : bc.ctl.time; hint: !bc.pick && bc.ctl.placeholder; icon: "󰥔"; minW: bc.t.sp(130); onHit: bc.pressed(bc.ctl, null) }
     }
   }
 
@@ -130,7 +136,7 @@ Item {
           required property var modelData
           readonly property bool radio: bc.kind === "radios"
           implicitWidth: mark.width + bc.t.sp(8) + Math.max(optText.implicitWidth, optDesc.visible ? optDesc.implicitWidth : 0)
-          implicitHeight: Math.max(mark.height, optCol.implicitHeight)
+          implicitHeight: Math.max(mark.height, optText.implicitHeight + (optDesc.visible ? optDesc.implicitHeight + 2 : 0))
           width: implicitWidth
           height: implicitHeight
           Rectangle {
@@ -138,11 +144,11 @@ Item {
             y: Math.max(0, (optText.implicitHeight - height) / 2)
             width: bc.t.sp(14); height: width
             radius: parent.radio ? width / 2 : 3
-            color: parent.modelData.on && !parent.radio ? bc.t.accent : "transparent"
-            border.width: parent.modelData.on && !parent.radio ? 0 : 1
-            border.color: parent.modelData.on ? bc.t.accent : bc.t.lineStrong
-            Glyph { visible: parent.parent.modelData.on && !parent.parent.radio; app: bc.app; anchors.centerIn: parent; icon: "󰄬"; size: bc.t.fsTiny; color: bc.t.onColor(bc.t.accent) }
-            Rectangle { visible: parent.parent.modelData.on && parent.parent.radio; anchors.centerIn: parent; width: parent.width - bc.t.sp(6); height: width; radius: width / 2; color: bc.t.accent }
+            color: bc.isOn(parent.modelData) && !parent.radio ? bc.t.accent : "transparent"
+            border.width: bc.isOn(parent.modelData) && !parent.radio ? 0 : 1
+            border.color: bc.isOn(parent.modelData) ? bc.t.accent : bc.t.lineStrong
+            Glyph { visible: bc.isOn(parent.parent.modelData) && !parent.parent.radio; app: bc.app; anchors.centerIn: parent; icon: "󰄬"; size: bc.t.fsTiny; color: bc.t.onColor(bc.t.accent) }
+            Rectangle { visible: bc.isOn(parent.parent.modelData) && parent.parent.radio; anchors.centerIn: parent; width: parent.width - bc.t.sp(6); height: width; radius: width / 2; color: bc.t.accent }
           }
           Column {
             id: optCol

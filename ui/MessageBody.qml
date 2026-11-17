@@ -215,6 +215,7 @@ Column {
         app: body.app
         win: body.win
         ctl: sec.accImage ? null : sec.acc
+        pick: sec.accImage || !sec.acc ? null : body.pickOf(sec.acc)
         onPressed: (c, o) => body.press(c, o)
       }
     }
@@ -302,6 +303,7 @@ Column {
           app: body.app
           win: body.win
           ctl: modelData
+          pick: body.pickOf(modelData)
           onPressed: (c, o) => body.press(c, o)
         }
       }
@@ -325,6 +327,7 @@ Column {
         app: body.app
         win: body.win
         ctl: parent.p.ctl
+        pick: body.pickOf(parent.p.ctl)
         fill: parent.p.ctl && parent.p.ctl.kind === "field" ? Math.min(parent.width, body.t.sp(480)) : 0
         onPressed: (c, o) => body.press(c, o)
       }
@@ -478,9 +481,99 @@ Column {
       body.ws.attachmentAction(body.conv, m, ctl)
       return
     }
-    if (ctl.el && ctl.el.type === "button") { body.ws.blockAction(body.conv, m, ctl); return }
-    // An overflow's or a static select's choice goes to the app as Slack sends it.
-    if (option && ctl.el && (ctl.el.type === "overflow" || ctl.el.type === "static_select")) { body.ws.blockAction(body.conv, m, ctl, null, option); return }
+    var el = ctl.el || {}, type = el.type || ""
+    var key = body.pickKey(ctl)
+    var send = function(fields, pick) {
+      if (pick) body.ws.setBlockPick(key, pick)
+      body.ws.blockAction(body.conv, m, ctl, null, fields ? { fields: fields } : null)
+    }
+    // A button with a confirm asks first, in the app's words.
+    if (type === "button" || type === "workflow_button") {
+      var cf = el.confirm
+      if (!cf) { body.ws.blockAction(body.conv, m, ctl); return }
+      var words = function(o, fb) { return o && o.text ? String(o.text).replace(/[*_~`]/g, "") : fb }
+      body.win.dialog("confirm", { title: words(cf.title, body.app.tr("Are you sure?", "Tem certeza?")), text: words(cf.text, ""),
+                                   confirm: words(cf.confirm, "OK"), cancel: words(cf.deny, ""), danger: cf.style === "danger",
+                                   action: function() { body.ws.blockAction(body.conv, m, ctl) } })
+      return
+    }
+    if (type === "overflow") { if (option) body.ws.blockAction(body.conv, m, ctl, null, option); return }
+    // A choice from a select's own options.
+    if (option && /select$/.test(type) && !/^multi_/.test(type)) {
+      body.ws.setBlockPick(key, { html: option.html })
+      body.ws.blockAction(body.conv, m, ctl, null, option)
+      return
+    }
+    function originals() {
+      var all = (el.options || []).slice()
+      ;(el.option_groups || []).forEach(function(g) { all = all.concat(g.options || []) })
+      return all
+    }
+    if (type === "checkboxes" && option) {
+      var cur = body.pickOf(ctl)
+      var on = cur && cur.on ? cur.on.slice() : ctl.options.filter(function(o) { return o.on }).map(function(o) { return o.value })
+      var i = on.indexOf(option.value)
+      if (i >= 0) on.splice(i, 1); else on.push(option.value)
+      send({ selected_options: originals().filter(function(o) { return on.indexOf(o.value) >= 0 }) }, { on: on })
+      return
+    }
+    if (type === "radio_buttons" && option) {
+      send({ selected_option: originals().filter(function(o) { return o.value === option.value })[0] || null }, { on: [option.value] })
+      return
+    }
+    var pk = type.match(/^(multi_)?(users|conversations|channels)_select$/)
+    if (pk) {
+      var multi = !!pk[1], what = pk[2]
+      body.win.dialog("blockPick", { kind: what, multi: multi, title: el.placeholder ? el.placeholder.text : "", onPick: function(ids) {
+        if (!ids.length) return
+        var names = ids.map(function(id) { return what === "users" ? "@" + body.ws.userName(id) : (body.ws.conv(id) && (body.ws.conv(id).kind === "channel" || body.ws.conv(id).kind === "private") ? "#" : "") + body.ws.convLabel(id) })
+        var one = what === "users" ? "selected_user" : what === "channels" ? "selected_channel" : "selected_conversation"
+        var f = {}
+        f[multi ? one + "s" : one] = multi ? ids : ids[0]
+        send(f, { html: U.escapeHtml(names.join(", ")) })
+      } })
+      return
+    }
+    var cur2 = body.pickOf(ctl) || {}
+    if (type === "datepicker") {
+      body.win.dialog("blockPick", { kind: "date", title: el.placeholder ? el.placeholder.text : "", date: cur2.ymd || el.initial_date || "", onPick: function(ymd) {
+        send({ selected_date: ymd }, { html: U.escapeHtml(body.dayText(ymd)), ymd: ymd })
+      } })
+      return
+    }
+    if (type === "timepicker") {
+      body.win.dialog("blockPick", { kind: "time", title: el.placeholder ? el.placeholder.text : body.app.tr("Pick a time", "Escolha um horário"), time: cur2.hm || el.initial_time || "", onPick: function(hm) {
+        var p = hm.split(":")
+        send({ selected_time: hm }, { html: U.escapeHtml(U.time(new Date(2000, 0, 1, +p[0], +p[1]), body.app.clock24)), hm: hm })
+      } })
+      return
+    }
+    if (type === "datetimepicker") {
+      var at = cur2.at || el.initial_date_time || 0
+      var dt0 = at ? new Date(at * 1000) : null
+      body.win.dialog("blockPick", { kind: "datetime", date: dt0 ? Qt.formatDate(dt0, "yyyy-MM-dd") : "", time: dt0 ? Qt.formatTime(dt0, "HH:mm") : "", onPick: function(epoch) {
+        var dt = new Date(epoch * 1000)
+        send({ selected_date_time: epoch }, { date: U.escapeHtml(body.dayText(Qt.formatDate(dt, "yyyy-MM-dd"))), time: U.escapeHtml(U.time(dt, body.app.clock24)), at: epoch })
+      } })
+      return
+    }
+    // What this app can't pick here (an external select's options come
+    // from the app): the message on Slack.
     Qt.openUrlExternally(body.ws.permalink(body.conv, m))
+  }
+
+  // Where a control's pick is kept (Workspace.blockPick).
+  function pickKey(ctl) {
+    if (!ctl) return ""
+    return body.conv + "/" + (body.msg ? body.msg.ts : "") + "/" + (ctl.blockId || "") + "/" + ((ctl.el && ctl.el.action_id) || "")
+  }
+  function pickOf(ctl) { return body.ws && ctl ? body.ws.blockPick(body.pickKey(ctl)) : null }
+  // "2026-11-17" → Today / Yesterday / Tomorrow / Nov 17, 2026.
+  function dayText(ymd) {
+    var m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!m) return ymd
+    var dt = new Date(+m[1], +m[2] - 1, +m[3])
+    var diff = U.dayDiff(dt, new Date())
+    return diff === 0 ? body.app.tr("Today", "Hoje") : diff === 1 ? body.app.tr("Yesterday", "Ontem") : diff === -1 ? body.app.tr("Tomorrow", "Amanhã") : U.shortDate(dt, body.app.lang)
   }
 }

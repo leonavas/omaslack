@@ -64,7 +64,7 @@ DialogFrame {
   footer: Row {
     anchors.right: parent.right
     spacing: d.t.sp(10)
-    SButton { id: cancelBtn; app: d.app; text: d.app.tr("Cancel", "Cancelar"); onClicked: d.closed() }
+    SButton { id: cancelBtn; app: d.app; text: d.args.cancel || d.app.tr("Cancel", "Cancelar"); onClicked: d.closed() }
     SButton {
       id: okBtn
       app: d.app

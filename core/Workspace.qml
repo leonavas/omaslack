@@ -2842,6 +2842,13 @@ Item {
   // answers by changing the message (message_changed) or opening a window.
   property real actionSentAt: 0
   function clientToken() { return "web-" + Date.now() }
+  // What was picked in an app's select, picker or choices, kept so the
+  // message shows it (Slack does, until the app changes the message):
+  // "conv/ts/block/action" → {html} | {date, time} | {on: [values]}.
+  property var blockPicks: ({})
+  property int blockPicksRev: 0
+  function blockPick(key) { root.blockPicksRev; return root.blockPicks[key] || null }
+  function setBlockPick(key, v) { root.blockPicks[key] = v; root.blockPicksRev++ }
   // `option`: the choice picked from an overflow or a static select
   // (Mrkdwn.control's, matched back to Slack's by its value).
   function blockAction(conv, m, ctl, done, option) {
@@ -2849,7 +2856,10 @@ Item {
     var act = { action_id: el.action_id || "", block_id: ctl.blockId || "", type: el.type || "button", action_ts: String(Date.now() / 1000) }
     if (el.text) act.text = el.text
     if (el.value !== undefined) act.value = el.value
-    if (option) {
+    // Anything else picked (a date, people, the checked boxes) as Slack
+    // names it: selected_date, selected_users, selected_options…
+    if (option && option.fields) { for (var fk in option.fields) act[fk] = option.fields[fk] }
+    else if (option) {
       var all = (el.options || []).slice()
       ;(el.option_groups || []).forEach(function(g) { all = all.concat(g.options || []) })
       var picked = all.filter(function(o) { return o.value === option.value })[0]
