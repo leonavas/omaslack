@@ -43,7 +43,7 @@ Row {
       // Pictures from other sites only while Preferences lets them (MessageBody.shows).
       Image {
         visible: !!av.att && (av.att.serviceIcon || av.att.authorIcon) !== "" && inner.shows(av.att.authorIcon || av.att.serviceIcon)
-        source: visible ? (av.att.authorIcon || av.att.serviceIcon || "") : ""
+        source: visible ? av.imageSource(av.att.authorIcon || av.att.serviceIcon || "") : ""
         width: av.t ? av.t.sp(16) : 16; height: width
         asynchronous: true
         anchors.verticalCenter: parent.verticalCenter
@@ -51,6 +51,7 @@ Row {
       Text {
         text: av.att ? (av.att.author || av.att.service) : ""
         textFormat: Text.PlainText
+        MouseArea { anchors.fill: parent; enabled: !!av.att && av.att.authorLink !== ""; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: av.linkHandler(av.att.authorLink) }
         color: av.t ? av.t.fg : "white"
         font.family: av.t ? av.t.font : "monospace"
         font.pixelSize: av.t ? av.t.fsSmall + 1 : 12
@@ -84,22 +85,22 @@ Row {
         visible: !!av.att && av.att.thumb !== "" && !av.att.image && inner.shows(av.att.thumb)
         anchors.right: parent.right
         width: av.t ? av.t.sp(72) : 72; height: width
-        source: visible ? av.att.thumb : ""
+        source: visible ? av.imageSource(av.att.thumb) : ""
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
       }
     }
-    Grid {
+    // Short fields two by two, long ones across.
+    Flow {
       visible: !!av.att && av.att.fields.length > 0
-      columns: 2
-      columnSpacing: av.t ? av.t.sp(16) : 16
-      rowSpacing: av.t ? av.t.sp(6) : 6
+      spacing: av.t ? av.t.sp(16) : 16
       width: parent.width
       Repeater {
         model: av.att ? av.att.fields : []
         delegate: Column {
           required property var modelData
-          width: modelData.short ? (col.width - av.t.sp(16)) / 2 : col.width
+          width: modelData.short ? Math.floor((col.width - av.t.sp(16)) / 2) - 1 : col.width
+          spacing: 2
           RichText { width: parent.width; app: av.app; html: "<b>" + modelData.title + "</b>"; size: av.t.fsSmall + 1; onLink: url => av.linkHandler(url) }
           RichText { width: parent.width; app: av.app; html: modelData.html; onLink: url => av.linkHandler(url) }
         }
@@ -130,14 +131,29 @@ Row {
         }
       }
     }
-    RichText {
-      visible: !!av.att && av.att.footer !== ""
+    // Footer: its icon, its words, and the time (Slack's "| Today at 9:00 AM").
+    Row {
+      visible: !!av.att && (av.att.footer !== "" || !!av.att.when)
       width: parent.width
-      app: av.app
-      html: av.att ? av.att.footer : ""
-      size: av.t ? av.t.fsTiny + 1 : 11
-      color: av.t ? av.t.fgDim : "gray"
-      onLink: url => av.linkHandler(url)
+      spacing: av.t ? av.t.sp(6) : 6
+      Image {
+        id: footIcon
+        visible: !!av.att && !!av.att.footerIcon && inner.shows(av.att.footerIcon)
+        source: visible ? av.imageSource(av.att.footerIcon) : ""
+        width: av.t ? av.t.sp(16) : 16; height: width
+        fillMode: Image.PreserveAspectFit
+        asynchronous: true
+        anchors.verticalCenter: parent.verticalCenter
+      }
+      RichText {
+        width: Math.min(implicitWidth, parent.width - (footIcon.visible ? footIcon.width + parent.spacing : 0))
+        app: av.app
+        html: !av.att ? "" : av.att.footer + (av.att.when ? (av.att.footer !== "" ? " | " : "") + av.att.when : "")
+        size: av.t ? av.t.fsTiny + 1 : 11
+        color: av.t ? av.t.fgDim : "gray"
+        anchors.verticalCenter: parent.verticalCenter
+        onLink: url => av.linkHandler(url)
+      }
     }
   }
 }

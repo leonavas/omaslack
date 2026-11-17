@@ -273,17 +273,21 @@ Item {
     s.convMatches = out.map(function(m) { return m.e })
 
     // People and group DMs: a person ahead of a group that matches as well
-    // (most often through that person's name), you behind others who do.
+    // (most often through that person's name), you ahead of others who
+    // match as well (searching your own name finds you first).
     // Deactivated accounts wait at the end, behind every active one.
     pout = pout.concat(gout)
     pout.sort(function(a, b) {
       if (!!a.e.archived !== !!b.e.archived) return a.e.archived ? 1 : -1
       if (!!a.e.deleted !== !!b.e.deleted) return a.e.deleted ? 1 : -1
       var ga = s.grade(a.tier), gb = s.grade(b.tier)
+      // You first when your name starts with what's typed, even if someone
+      // else's name is exactly it.
+      if (a.e.self !== b.e.self && ga <= 1 && gb <= 1) return a.e.self ? -1 : 1
       if (ga !== gb) return ga - gb
       if (!!a.e.ckind !== !!b.e.ckind) return a.e.ckind ? 1 : -1
       if (!!a.e.bot !== !!b.e.bot) return a.e.bot ? 1 : -1
-      if (a.e.self !== b.e.self) return a.e.self ? 1 : -1
+      if (a.e.self !== b.e.self) return a.e.self ? -1 : 1
       if (a.latest !== b.latest) return b.latest - a.latest
       if (a.tier !== b.tier) return a.tier - b.tier
       var la = (a.e.label || a.e.name).length, lb = (b.e.label || b.e.name).length
@@ -293,11 +297,10 @@ Item {
     s.peopleMatches = pout.map(function(m) { return m.e })
 
     // All: the section whose first answer is the better match goes first;
-    // People on a tie, unless what leads it is you. Archived or deactivated
-    // counts as weak.
+    // People on a tie. Archived or deactivated counts as weak.
     function lead(m) { return !m ? 9 : (m.e.archived || m.e.deleted ? 4 : s.grade(m.tier)) }
     var cg = lead(out[0]), pg = lead(pout[0])
-    s.peopleFirst = pg < cg || (pg === cg && !(pout.length && pout[0].e.self))
+    s.peopleFirst = pg <= cg
   }
 
   // Empty query: where you've been, then what's unread, then what moved last.

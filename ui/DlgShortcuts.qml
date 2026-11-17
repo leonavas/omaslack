@@ -40,6 +40,7 @@ DialogFrame {
       { keys: [["Esc"]], en: "Mark the conversation as read", pt: "Marcar a conversa como lida" },
       { keys: [["Ctrl", "V"]], en: "Paste, pictures too", pt: "Colar, imagens também" },
       { keys: [["Ctrl", "U"]], en: "Upload a file", pt: "Enviar um arquivo" },
+      { keys: [["Ctrl", "Shift", "Enter"]], en: "Create a text snippet", pt: "Criar um snippet de texto" },
       { keys: [["Ctrl", "Shift", "\\"]], en: "React to the last message", pt: "Reagir à última mensagem" },
       { keys: [[":"], ["@"], ["#"], ["/"]], join: "", en: "Emoji, mention someone, a channel, a command", pt: "Emoji, mencionar alguém, um canal, um comando" },
       { keys: [["↑"], ["↓"]], join: "/", en: "In the suggestions: move", pt: "Nas sugestões: mover" },

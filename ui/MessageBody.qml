@@ -68,7 +68,8 @@ Column {
       required property var modelData
       width: body.width
       sourceComponent: ({ text: textC, quote: quoteC, code: codeC, header: headerC, section: sectionC, context: contextC,
-                          divider: dividerC, image: imageC, actions: actionsC, video: videoC, attachment: attachmentC })[modelData.t] || null
+                          divider: dividerC, image: imageC, actions: actionsC, video: videoC, attachment: attachmentC,
+                          input: inputC, table: tableC })[modelData.t] || null
     }
   }
 
@@ -146,29 +147,49 @@ Column {
     RichText {
       app: body.app
       html: "<b>" + parent.modelData.html + "</b>"
-      size: body.t.fsTitle + 1
+      // Markdown's # … ######: smaller as they go down.
+      size: [body.t.fsTitle + 1, body.t.fsTitle + 1, body.t.fsTitle, body.t.fsText + 1, body.t.fsText, body.t.fsText, body.t.fsText][parent.modelData.level || 0]
       onLink: url => body.link(url)
     }
   }
 
+  // A section: its text (quotes and code blocks too) and fields in a
+  // column, the accessory (picture, button, menu, choices) on the right.
+  // At most Slack's width, so the accessory sits where Slack puts it.
   Component {
     id: sectionC
     Item {
+      id: sec
       readonly property var p: parent.modelData
-      implicitHeight: Math.max(secCol.implicitHeight, acc.visible ? acc.height : 0)
+      readonly property var acc: p.accessory
+      readonly property bool accImage: !!acc && acc.kind === "image"
+      readonly property real room: Math.min(width, body.t.sp(640))
+      readonly property real accW: !acc ? 0 : accImage ? (body.shows(acc.url) ? body.t.sp(88) : 0) : accCtl.width
+      implicitHeight: Math.max(secCol.implicitHeight, accImage ? (accW > 0 ? body.t.sp(88) : 0) : (acc ? accCtl.height : 0))
       Column {
         id: secCol
-        width: parent.width - (acc.visible ? acc.width + body.t.sp(12) : 0)
+        width: sec.room - (sec.accW > 0 ? sec.accW + body.t.sp(16) : 0)
         spacing: body.t.sp(6)
-        RichText { visible: parent.parent.p.html !== ""; width: parent.width; app: body.app; html: parent.parent.p.html; onLink: url => body.link(url) }
+        RichText { visible: sec.p.html !== ""; width: parent.width; app: body.app; html: sec.p.html; onLink: url => body.link(url) }
+        // By URL: a MessageBody can't hold one by name.
+        Loader {
+          visible: (sec.p.sub || []).length > 0
+          width: parent.width
+          Component.onCompleted: if (visible) setSource("MessageBody.qml", { app: body.app, win: body.win, ws: body.ws, conv: body.conv, parts: sec.p.sub })
+          onLoaded: {
+            item.width = Qt.binding(function() { return secCol.width })
+            item.msg = Qt.binding(function() { return body.msg })
+            item.parts = Qt.binding(function() { return sec.p.sub })
+          }
+        }
         Grid {
-          visible: parent.parent.p.fields.length > 0
+          visible: sec.p.fields.length > 0
           columns: 2
           columnSpacing: body.t.sp(16)
-          rowSpacing: body.t.sp(6)
+          rowSpacing: body.t.sp(8)
           width: parent.width
           Repeater {
-            model: secCol.parent.p.fields
+            model: sec.p.fields
             delegate: RichText {
               required property var modelData
               width: (secCol.width - body.t.sp(16)) / 2
@@ -179,32 +200,22 @@ Column {
           }
         }
       }
-      Loader {
-        id: acc
-        visible: !!parent.p.accessory && (parent.p.accessory.kind !== "image" || body.shows(parent.p.accessory.url))
-        anchors.right: parent.right
-        // No width or height of its own: a sized Loader squeezes its
-        // item to that size (the button shrank to nothing).
-        sourceComponent: !parent.p.accessory ? null : (parent.p.accessory.kind === "image" ? accImg : accBtn)
-        Component {
-          id: accImg
-          Image {
-            width: body.t.sp(88); height: width
-            source: body.imageSource(acc.parent.p.accessory.url)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-          }
-        }
-        Component {
-          id: accBtn
-          SButton {
-            app: body.app
-            small: true
-            text: acc.parent.p.accessory.label
-            kind: acc.parent.p.accessory.style === "primary" ? "green" : (acc.parent.p.accessory.style === "danger" ? "danger" : "secondary")
-            onClicked: body.press(acc.parent.p.accessory)
-          }
-        }
+      Image {
+        visible: sec.accImage && sec.accW > 0
+        x: sec.room - width
+        width: body.t.sp(88); height: width
+        source: visible ? body.imageSource(sec.acc.url) : ""
+        fillMode: Image.PreserveAspectCrop
+        asynchronous: true
+      }
+      BlockControl {
+        id: accCtl
+        visible: !!sec.acc && !sec.accImage
+        x: sec.room - width
+        app: body.app
+        win: body.win
+        ctl: sec.accImage ? null : sec.acc
+        onPressed: (c, o) => body.press(c, o)
       }
     }
   }
@@ -212,26 +223,38 @@ Column {
   Component {
     id: contextC
     Flow {
+      id: cx
       readonly property var p: parent.modelData
+      // (Cached messages from before `bits`: the images, then the words.)
+      readonly property var bits: p.bits || p.images.map(function(u) { return { image: u } }).concat([{ html: p.html }])
       spacing: body.t.sp(6)
       Repeater {
-        model: parent.p.images
-        delegate: Image {
+        model: cx.bits
+        delegate: Loader {
           required property var modelData
-          visible: body.shows(modelData)
-          width: body.t.sp(16); height: width
-          source: body.imageSource(modelData)
-          fillMode: Image.PreserveAspectFit
-          asynchronous: true
+          sourceComponent: modelData.image ? ctxImg : ctxText
+          Component {
+            id: ctxImg
+            Image {
+              visible: body.shows(parent.modelData.image)
+              width: visible ? body.t.sp(18) : 0; height: body.t.sp(18)
+              source: visible ? body.imageSource(parent.modelData.image) : ""
+              fillMode: Image.PreserveAspectFit
+              asynchronous: true
+            }
+          }
+          Component {
+            id: ctxText
+            RichText {
+              width: Math.min(implicitWidth, body.width)
+              app: body.app
+              html: parent.modelData.html
+              size: body.t.fsSmall
+              color: body.t.fgDim
+              onLink: url => body.link(url)
+            }
+          }
         }
-      }
-      RichText {
-        width: Math.min(implicitWidth, body.width)
-        app: body.app
-        html: parent.p.html
-        size: body.t.fsSmall
-        color: body.t.fgDim
-        onLink: url => body.link(url)
       }
     }
   }
@@ -246,7 +269,15 @@ Column {
     Column {
       readonly property var p: parent.modelData
       spacing: body.t.sp(4)
-      Text { visible: parent.p.title !== ""; text: parent.p.title; textFormat: Text.PlainText; color: body.t.fgDim; font.family: body.t.font; font.pixelSize: body.t.fsSmall; width: parent.width; elide: Text.ElideRight }
+      // Its title, emoji drawn, and its size when Slack says it.
+      RichText {
+        visible: parent.p.title !== ""
+        width: parent.width
+        app: body.app
+        html: (parent.p.titleHtml || U.escapeHtml(parent.p.title)) + (parent.p.bytes ? " (" + U.humanSize(parent.p.bytes, body.app.lang) + ")" : "")
+        size: body.t.fsSmall
+        color: body.t.fgDim
+      }
       SlackImage {
         visible: body.shows(parent.p.url)
         app: body.app
@@ -266,13 +297,129 @@ Column {
       spacing: body.t.sp(8)
       Repeater {
         model: parent.p.items
-        delegate: SButton {
+        delegate: BlockControl {
           required property var modelData
           app: body.app
-          small: true
-          text: modelData.label
-          kind: modelData.style === "primary" ? "green" : (modelData.style === "danger" ? "danger" : "secondary")
-          onClicked: body.press(modelData)
+          win: body.win
+          ctl: modelData
+          onPressed: (c, o) => body.press(c, o)
+        }
+      }
+    }
+  }
+
+  // An input block: its label (and "(optional)"), the element, the hint.
+  Component {
+    id: inputC
+    Column {
+      readonly property var p: parent.modelData
+      spacing: body.t.sp(6)
+      RichText {
+        visible: parent.p.label !== ""
+        width: parent.width
+        app: body.app
+        html: "<b>" + parent.p.label + "</b>" + (parent.p.optional ? " <span style=\"color:" + body.t.hex(body.t.fgDim) + ";\">" + U.escapeHtml(body.app.tr("(optional)", "(opcional)")) + "</span>" : "")
+      }
+      BlockControl {
+        visible: !!parent.p.ctl
+        app: body.app
+        win: body.win
+        ctl: parent.p.ctl
+        fill: parent.p.ctl && parent.p.ctl.kind === "field" ? Math.min(parent.width, body.t.sp(480)) : 0
+        onPressed: (c, o) => body.press(c, o)
+      }
+      RichText { visible: parent.p.hint !== ""; width: parent.width; app: body.app; html: parent.p.hint; size: body.t.fsSmall; color: body.t.fgDim }
+    }
+  }
+
+  // A table (Block Kit's, or a Markdown one): bordered cells, the first
+  // row bold on a tint, each column aligned as asked.
+  Component {
+    id: tableC
+    Item {
+      id: tb
+      readonly property var p: parent.modelData
+      readonly property int cols: p.rows.reduce(function(n, r) { return Math.max(n, r.length) }, 0)
+      // Each column as wide as its widest cell, the whole at most the message.
+      readonly property var widths: {
+        var w = []
+        for (var c = 0; c < tb.cols; c++) w.push(body.t.sp(40))
+        for (var i = 0; i < measure.count; i++) {
+          var it = measure.itemAt(i)
+          if (it) w[it.col] = Math.max(w[it.col], Math.min(body.t.sp(320), it.implicitWidth + body.t.sp(20)))
+        }
+        var total = w.reduce(function(a, b) { return a + b }, 0)
+        if (total > tb.width && total > 0) w = w.map(function(x) { return x * tb.width / total })
+        return w
+      }
+      implicitHeight: grid.height
+      // Measured once, off screen.
+      Repeater {
+        id: measure
+        model: tb.p.rows.reduce(function(all, r, ri) { return all.concat(r.map(function(h, ci) { return { html: h, col: ci, head: ri === 0 && tb.p.header } })) }, [])
+        delegate: Text {
+          required property var modelData
+          readonly property int col: modelData.col
+          visible: false
+          text: modelData.head ? "<b>" + modelData.html + "</b>" : modelData.html
+          textFormat: Text.RichText
+          font.family: body.t.font
+          font.pixelSize: body.t.fsText
+        }
+      }
+      Rectangle {
+        id: grid
+        width: col.width + 2
+        height: col.height + 2
+        radius: Math.max(4, body.t.radiusSmall)
+        color: "transparent"
+        border.width: 1
+        border.color: body.t.lineStrong
+        clip: true
+        Column {
+          id: col
+          x: 1; y: 1
+          Repeater {
+            model: tb.p.rows
+            delegate: Row {
+              id: tr
+              required property var modelData
+              required property int index
+              readonly property bool head: index === 0 && tb.p.header
+              // The row as tall as its tallest cell.
+              readonly property real h: {
+                var m = body.t.sp(30)
+                for (var i = 0; i < cells.count; i++) { var it = cells.itemAt(i); if (it) m = Math.max(m, it.need) }
+                return m
+              }
+              Repeater {
+                id: cells
+                model: tb.cols
+                delegate: Rectangle {
+                  required property int index
+                  readonly property string html: tr.modelData[index] || ""
+                  readonly property string align: tb.p.align[index] || "left"
+                  width: tb.widths[index] || body.t.sp(40)
+                  readonly property real need: cell.implicitHeight + body.t.sp(12)
+                  height: tr.h
+                  color: tr.head ? body.t.alpha(body.t.fg, 0.06) : "transparent"
+                  border.width: 0
+                  Rectangle { visible: index > 0; width: 1; height: parent.height; color: body.t.lineStrong }
+                  Rectangle { visible: tr.index > 0; width: parent.width; height: 1; color: body.t.lineStrong }
+                  RichText {
+                    id: cell
+                    x: body.t.sp(10)
+                    y: body.t.sp(6)
+                    width: parent.width - body.t.sp(20)
+                    app: body.app
+                    html: tr.head ? "<b>" + parent.html + "</b>" : parent.html
+                    horizontalAlignment: parent.align === "right" ? Text.AlignRight : parent.align === "center" ? Text.AlignHCenter : Text.AlignLeft
+                    onLink: url => body.link(url)
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -313,8 +460,10 @@ Column {
   // the official client sends them (Workspace.blockAction /
   // attachmentAction). Menus and pickers this app doesn't draw: the message
   // on Slack.
-  function press(ctl) {
+  function press(ctl, option) {
     if (!ctl) return
+    // A choice of an overflow or a select with its own link opens it.
+    if (option && option.url) { if (/^https?:\/\//i.test(option.url)) body.app.openUrl(option.url); return }
     if (ctl.url) { if (/^https?:\/\//i.test(ctl.url)) body.app.openUrl(ctl.url); return }
     var m = body.msg
     if (!m || !body.conv || !body.ws) return
@@ -330,6 +479,8 @@ Column {
       return
     }
     if (ctl.el && ctl.el.type === "button") { body.ws.blockAction(body.conv, m, ctl); return }
+    // An overflow's or a static select's choice goes to the app as Slack sends it.
+    if (option && ctl.el && (ctl.el.type === "overflow" || ctl.el.type === "static_select")) { body.ws.blockAction(body.conv, m, ctl, null, option); return }
     Qt.openUrlExternally(body.ws.permalink(body.conv, m))
   }
 }

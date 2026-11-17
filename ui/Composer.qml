@@ -545,6 +545,19 @@ Rectangle {
     }
   }
   function pickFiles() { if (!box.note && !picker.running) picker.running = true }
+  // Slack's "Text snippet" (Ctrl+Shift+Enter): what's typed goes in as its
+  // content, and leaves the box once the snippet is sent.
+  function newSnippet() {
+    if (box.note || box.editing || !box.win) return
+    var typed = RD.isEmpty(box.doc) ? "" : RD.toMarkup(box.outgoing())
+    box.win.dialog("snippet", { conv: box.conv, threadTs: box.threadTs, content: typed, onDone: function() { if (typed) box.clearBox() } })
+  }
+  function plusMenu(item) {
+    box.win.menuAt(item, [
+      { label: box.app.tr("Text snippet", "Snippet de texto"), icon: "󰅩", hint: "Ctrl+Shift+Enter", action: function() { box.newSnippet() } },
+      { label: box.app.tr("Upload from your computer", "Enviar do seu computador"), icon: "󰋊", hint: "Ctrl+U", action: function() { box.pickFiles() } }
+    ], 0, -box.t.sp(8) - 2 * box.t.sp(32) - box.t.sp(16))
+  }
 
   Process {
     id: statProc
@@ -827,6 +840,7 @@ Rectangle {
             if (key === Qt.Key_Tab || ((key === Qt.Key_Return || key === Qt.Key_Enter) && !shift)) { if (complete.pick()) { event.accepted = true; return } }
             if (key === Qt.Key_Escape) { complete.dismiss(); event.accepted = true; return }
           }
+          if ((key === Qt.Key_Return || key === Qt.Key_Enter) && ctrl && shift && !box.note && !box.editing) { box.newSnippet(); event.accepted = true; return }
           if (key === Qt.Key_Return || key === Qt.Key_Enter) {
             // In a code block Enter is a new line, and Ctrl+Enter sends.
             if (shift || (!ctrl && box.marks.k === "pre")) box.newline()
@@ -927,8 +941,8 @@ Rectangle {
           anchors.verticalCenter: parent.verticalCenter
           color: plusMa.containsMouse ? box.t.hoverStrong : box.t.alpha(box.t.fg, 0.1)
           Glyph { app: box.app; anchors.centerIn: parent; inkCentered: true; icon: ""; size: box.t.fsIcon + 3; color: plusMa.containsMouse ? box.t.fgBright : box.t.fgSoft }
-          MouseArea { id: plusMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: box.pickFiles() }
-          PanelToolTip { visible: plusMa.containsMouse; text: box.app.tr("Upload from your computer", "Enviar do seu computador") + "  Ctrl+U" }
+          MouseArea { id: plusMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: box.plusMenu(parent) }
+          PanelToolTip { visible: plusMa.containsMouse; text: box.app.tr("Attach", "Anexar") }
         }
         FmtButton { visible: botRow.keeps("aa"); app: box.app; icon: ""; iconSize: box.t.fsIcon + 5; tone: box.t.fgSoft; underlined: box.showFormatting
                     tip: box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação")
@@ -950,12 +964,15 @@ Rectangle {
           onClicked: {
             var labels = {
               plus: [box.app.tr("Upload from your computer", "Enviar do seu computador"), "Ctrl+U", function() { box.pickFiles() }],
+              snippet: [box.app.tr("Text snippet", "Snippet de texto"), "Ctrl+Shift+Enter", function() { box.newSnippet() }],
               aa: [box.showFormatting ? box.app.tr("Hide formatting", "Ocultar formatação") : box.app.tr("Show formatting", "Mostrar formatação"), "", function() { botRow.toggleFormatting() }],
               emoji: [box.app.tr("Emoji", "Emoji"), "", function() { box.win.emojiPicker(botMore, function(name) { box.insertEmoji(name); input.forceActiveFocus() }, {}) }],
               at: [box.app.tr("Mention someone", "Mencionar alguém"), "", function() { box.mention() }],
               shortcut: [box.app.tr("Run a shortcut", "Executar um atalho"), "", function() { botRow.runShortcut() }]
             }
-            var out = botRow.order.slice(botRow.fits).map(function(k) { var l = labels[k]; return { label: l[0], hint: l[1], action: l[2] } })
+            var hidden = botRow.order.slice(botRow.fits)
+            if (hidden.indexOf("plus") >= 0) hidden.splice(hidden.indexOf("plus") + 1, 0, "snippet")
+            var out = hidden.map(function(k) { var l = labels[k]; return { label: l[0], hint: l[1], action: l[2] } })
             box.win.menuAt(botMore, out, 0, -box.t.sp(8) - out.length * box.t.sp(32))
           }
         }

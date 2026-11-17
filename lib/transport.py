@@ -20,6 +20,7 @@ Credentials only ever arrive on stdin and only ever go to slack.com hosts.
 import base64
 import gzip
 import hmac
+import io
 import json
 import os
 import random
@@ -565,12 +566,18 @@ def free_name(dest):
 def op_post_file(msg):
     """The bytes of a file to an upload URL (files.getUploadURLExternal),
     sent a slice at a time. `progress`: {"id", "progress": bytes, "total"}
-    lines as they go, a few a second at most, as download's."""
-    path = msg["path"]
-    try:
-        total = os.path.getsize(path)
-    except OSError as e:
-        return {"ok": False, "error": str(e)}
+    lines as they go, a few a second at most, as download's. `data`
+    instead of `path`: text sent as UTF-8 bytes (a snippet typed in)."""
+    data = msg.get("data")
+    path = msg.get("path") or ""
+    if data is not None:
+        data = str(data).encode("utf-8")
+        total = len(data)
+    else:
+        try:
+            total = os.path.getsize(path)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
     last = [0.0]
     rid = msg.get("id")
 
@@ -578,7 +585,7 @@ def op_post_file(msg):
         # Read from the start on each try (request reopens a stale connection once).
         def __iter__(self):
             done = 0
-            with open(path, "rb") as f:
+            with (io.BytesIO(data) if data is not None else open(path, "rb")) as f:
                 while True:
                     if rid in cancelled:
                         raise Cancelled()

@@ -26,11 +26,16 @@ Flow {
       required property var modelData
       // MediaView by URL: it can't compile without Qt Multimedia.
       Component.onCompleted: {
-        if (U.mediaKind(modelData) && fl.app.canPlayMedia)
+        // (Messages cached before `stub` was known: no type at all.)
+        if ((modelData.stub || (!modelData.external && !modelData.mimetype && !modelData.filetype && modelData.mode !== "snippet" && modelData.mode !== "post")) && fl.ws && fl.ws.completeFile) fl.ws.completeFile(fl.conv, fl.ts, modelData)
+        if (U.isSnippet(modelData) && !modelData.uploading)
+          setSource(Qt.resolvedUrl("SnippetView.qml"), { app: fl.app, win: fl.win, ws: fl.ws, file: modelData, maxW: fl.width })
+        else if (U.mediaKind(modelData) && fl.app.canPlayMedia)
           setSource(Qt.resolvedUrl("MediaView.qml"), { app: fl.app, win: fl.win, ws: fl.ws, file: modelData, user: fl.user, conv: fl.conv, ts: fl.ts })
         else sourceComponent = modelData.image && modelData.thumb ? imageC : cardC
       }
       Binding { when: !!fileLoader.item && !!U.mediaKind(fileLoader.modelData) && fl.app.canPlayMedia; target: fileLoader.item; property: "maxW"; value: Math.min(fl.width, fl.t.sp(480)) }
+      Binding { when: !!fileLoader.item && U.isSnippet(fileLoader.modelData) && !fileLoader.modelData.uploading; target: fileLoader.item; property: "maxW"; value: fl.width }
     }
   }
 

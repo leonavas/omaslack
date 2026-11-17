@@ -247,7 +247,7 @@ Item {
     "users.channelSections.list", "stars.list", "users.priority.list", "client.counts", "client.userBoot", "client.getWebSocketURL",
     "rtm.connect", "emoji.list", "commands.list", "users.prefs.get", "dnd.info", "dnd.teamInfo", "saved.list", "conversations.history",
     "conversations.replies", "conversations.info", "conversations.members", "conversations.list", "pins.list", "reactions.get",
-    "search.messages", "search.inline", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "search.files", "admin.apps.requests.list", "admin.roles.entity.listAssignments"]
+    "search.messages", "search.inline", "subscriptions.thread.getView", "chat.scheduledMessages.list", "bots.info", "apps.profile.get", "activity.feed", "files.list", "files.info", "search.files", "admin.apps.requests.list", "admin.roles.entity.listAssignments"]
 
   function api(method, params, ok, fail) {
     if (root.readOnlyMode && root.readMethods.indexOf(method) < 0) {
@@ -451,6 +451,48 @@ Item {
     })
   }
   property var _others: ({})
+
+  // A file that came half-told (a phone's upload, announced before Slack
+  // has looked at it: no type, no thumbnails): files.info, its whole self
+  // into the message. Slack's own client does the same. Asked again a few
+  // times while Slack is still on it.
+  function completeFile(chan, ts, f, tries) {
+    if (!chan || !ts || !f || !f.id || root.account.demo) return
+    tries = tries || 0
+    if (!tries && root._asked["file" + f.id]) return
+    root._asked["file" + f.id] = true
+    root.api("files.info", { file: f.id }, function(b) {
+      if (!b.file) return
+      var nf = Model.parseFile(b.file)
+      if (nf.stub) {
+        if (tries < 4) fileRetry.later(function() { root.completeFile(chan, ts, f, tries + 1) }, 3000 * (tries + 1))
+        return
+      }
+      root.replaceEverywhere(chan, ts, function(old) {
+        return Model.patch(old, { files: (old.files || []).map(function(x) { return x.id === nf.id ? nf : x }) })
+      })
+      if (root.lastMsgs[chan] && root.lastMsgs[chan].ts === ts) {
+        root.lastMsgs[chan] = Model.patch(root.lastMsgs[chan], { files: root.lastMsgs[chan].files.map(function(x) { return x.id === nf.id ? nf : x }) })
+        root.bump("lastRev")
+      }
+    }, function() {
+      if (tries < 4) fileRetry.later(function() { root.completeFile(chan, ts, f, tries + 1) }, 3000 * (tries + 1))
+      else delete root._asked["file" + f.id]
+    })
+  }
+  Timer {
+    id: fileRetry
+    property var jobs: []
+    function later(fn, ms) { jobs.push({ fn: fn, at: Date.now() + ms }); if (!running) start() }
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      var now = Date.now(), due = jobs.filter(function(j) { return j.at <= now })
+      jobs = jobs.filter(function(j) { return j.at > now })
+      if (!jobs.length) stop()
+      due.forEach(function(j) { j.fn() })
+    }
+  }
 
   // ---------------------------------------------------------------- apps
   // The apps that post here, by bot id: {name, icon, app, user}, from
@@ -1309,6 +1351,12 @@ Item {
         if (m.user && users.indexOf(m.user) < 0) users.push(m.user)
         return Model.patch(old, { replyCount: (old.replyCount || 0) + (r && r.msgs.some(function(x) { return x.ts === m.ts }) ? 0 : 1), latestReply: m.ts, replyUsers: users })
       }, true)
+      var followed = root.threadsView.list.find(function(t) { return t.conv === chan && t.root && t.root.ts === m.threadTs })
+      if (followed && !m.pending && !m.ephemeral) {
+        followed.replies = Model.upsert(followed.replies || [], m)
+        if (U.cmpTs(m.ts, followed.latest) > 0) followed.latest = m.ts
+        root.threadsRev++
+      }
       threadsSoon.restart()
     }
     if (!isReply || m.subtype === "thread_broadcast") {
@@ -1964,8 +2012,39 @@ Item {
     }, function() {})
   }
 
+  // A reload asked for while one runs: it runs again after, so a reply that
+  // came in meanwhile still shows.
+  property bool threadsAgain: false
+
+  // Replies this app already holds for a thread (an open thread's, or ones
+  // that came live), without the root and local placeholders.
+  function knownReplies(conv, ts) {
+    var r = root.replies[conv + "/" + ts]
+    var out = (r && r.msgs ? r.msgs : []).filter(function(m) { return m.ts !== ts && !m.pending && !m.ephemeral })
+    var t = root.threadsView.list.find(function(x) { return x.conv === conv && x.root && x.root.ts === ts })
+    return t ? Model.upsertMany(out, t.replies || [], true) : out
+  }
+
+  // Unread threads whose newest replies didn't come with the view (Slack's
+  // latest_replies can lag behind latest_reply): fetched from the thread.
+  function fillThreadReplies(list) {
+    var missing = list.filter(function(t) {
+      return t.unread && !t.replies.some(function(r) { return U.cmpTs(r.ts, t.lastRead) > 0 })
+    }).slice(0, 8)
+    missing.forEach(function(t) {
+      root.api("conversations.replies", { channel: t.conv, ts: t.root.ts, oldest: t.lastRead || t.root.ts, limit: 20 }, function(b) {
+        var got = (b.messages || []).map(Model.parseMessage).filter(function(m) { return m.ts !== t.root.ts })
+        if (!got.length) return
+        t.replies = Model.upsertMany(t.replies, got)
+        t.newCount = Math.max(t.newCount, t.replies.filter(function(r) { return U.cmpTs(r.ts, t.lastRead) > 0 }).length)
+        root.threadsRev++
+      }, function() {})
+    })
+  }
+
   function loadThreads() {
-    if (root.threadsView.loading) return
+    if (root.threadsView.loading) { root.threadsAgain = true; return }
+    root.threadsAgain = false
     root.threadsView = { list: root.threadsView.list, total: root.threadsView.total, loaded: root.threadsView.loaded, loading: true }
     var list = [], seen = {}, total = 0
     function page(n, cursor) {
@@ -1980,7 +2059,8 @@ Item {
           var k = rm.channel + "/" + rm.ts
           if (seen[k]) return
           seen[k] = true
-          var replies = (t.latest_replies || []).map(Model.parseMessage).sort(function(a, c) { return U.cmpTs(a.ts, c.ts) })
+          var replies = Model.upsertMany(root.knownReplies(rm.channel, rm.ts), (t.latest_replies || []).map(Model.parseMessage)
+                                         .filter(function(r) { return r.ts !== rm.ts }))
           var latest = rm.latest_reply || (replies.length ? replies[replies.length - 1].ts : "")
           var lastRead = rm.last_read || ""
           var unread = latest !== "" && U.cmpTs(latest, lastRead) > 0
@@ -1997,10 +2077,13 @@ Item {
           })
           root.threadsView = { list: list, total: total, loaded: true, loading: false }
           root.threadsRev++
+          root.fillThreadReplies(list)
+          if (root.threadsAgain) threadsSoon.restart()
         }
       }, function() {
         root.threadsView = { list: root.threadsView.list, total: root.threadsView.total, loaded: true, loading: false }
         root.threadsRev++
+        if (root.threadsAgain) threadsSoon.restart()
       })
     }
     page(0, "")
@@ -2371,7 +2454,7 @@ Item {
     local.pending = true
     local.files = files.map(function(f, i) {
       var ext = String(f.name || "").split(".").pop()
-      return { id: "", name: f.name || "file", title: "", thumb: null, w: 0, h: 0, full: "", permalink: "", download: "upload:" + local.ts + ":" + i,
+      return { id: "", name: f.name || "file", title: f.title || "", thumb: null, w: 0, h: 0, full: "", permalink: "", download: "upload:" + local.ts + ":" + i,
                size: f.size || 0, filetype: ext.toLowerCase(), prettyType: "", mimetype: "", external: false, image: false, mode: "",
                preview: "", poster: "", posterW: 0, posterH: 0, duration: 0, uploading: local.ts }
     })
@@ -2397,18 +2480,20 @@ Item {
     }
     files.forEach(function(f, i) {
       var key = local.files[i].download
-      root.api("files.getUploadURLExternal", { filename: f.name, length: f.size }, function(b) {
+      var up = { filename: f.name, length: f.size }
+      if (f.snippetType) up.snippet_type = f.snippetType
+      root.api("files.getUploadURLExternal", up, function(b) {
         if (off) return
         if (!b.upload_url) { check(); return }
-        posts.push(wire.postFile(b.upload_url, f.path, function(r) {
+        posts.push(wire.postFile(b.upload_url, f.path || "", function(r) {
           if (off) return
-          if (r.ok) ids.push({ id: b.file_id, title: f.name })
+          if (r.ok) ids.push({ id: b.file_id, title: f.title || f.name })
           check()
         }, function(done, total) {
           if (off) return
           root.downloads[key] = { done: done, total: total || f.size || 0 }
           root.downloadsRev++
-        }))
+        }, typeof f.data === "string" ? f.data : undefined))
       }, function(err) { if (off) return; root.say(root.errorText(err)); check() })
     })
     function check() {
@@ -2437,6 +2522,18 @@ Item {
         root._sentUploads = root._sentUploads.concat([{ conv: conv, ts: local.ts, threadTs: threadTs, ids: fileIds, at: Date.now(), polled: Date.now(), clear: clear, release: turn.finish }])
       }, function(err) { fail(root.errorText(err)) })
     }
+  }
+  // Slack's "Create snippet": text typed in goes up as a file (no path,
+  // its bytes in `data`) with `snippet_type`, so Slack shows it as code.
+  // `type` "" lets Slack guess; the title, if any, names it.
+  function sendSnippet(conv, threadTs, content, title, type, comment) {
+    var text = String(content || "")
+    if (!text.trim()) return
+    var ext = U.snippetExt(type)
+    var t = String(title || "").trim()
+    var name = !t ? "snippet." + ext : t.indexOf(".") > 0 ? t : t + "." + ext
+    var file = { name: name, title: String(title || "").trim(), data: text, size: U.utf8Length(text), snippetType: type || "" }
+    root.upload(conv, [file], String(comment || "").trim(), threadTs || "")
   }
   // A message of the conversation (or thread) with one of these files.
   function uploadArrived(conv, threadTs, ids) {
@@ -2745,11 +2842,19 @@ Item {
   // answers by changing the message (message_changed) or opening a window.
   property real actionSentAt: 0
   function clientToken() { return "web-" + Date.now() }
-  function blockAction(conv, m, ctl, done) {
+  // `option`: the choice picked from an overflow or a static select
+  // (Mrkdwn.control's, matched back to Slack's by its value).
+  function blockAction(conv, m, ctl, done, option) {
     var el = ctl.el || {}
     var act = { action_id: el.action_id || "", block_id: ctl.blockId || "", type: el.type || "button", action_ts: String(Date.now() / 1000) }
     if (el.text) act.text = el.text
     if (el.value !== undefined) act.value = el.value
+    if (option) {
+      var all = (el.options || []).slice()
+      ;(el.option_groups || []).forEach(function(g) { all = all.concat(g.options || []) })
+      var picked = all.filter(function(o) { return o.value === option.value })[0]
+      if (picked) act.selected_option = picked
+    }
     if (el.style) act.style = el.style
     var args = { actions: [act], container: { type: "message", message_ts: m.ts, channel_id: conv, is_ephemeral: !!m.ephemeral },
                  client_token: root.clientToken() }

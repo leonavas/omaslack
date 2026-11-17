@@ -91,8 +91,11 @@ Item {
   // stream): cb({ok, url}).
   function stream(url, cb) { return _request({ op: "stream", url: url }, cb) }
   // `onProgress(done, total)`: as it goes up.
-  function postFile(url, path, cb, onProgress) {
-    var id = _request({ op: "post_file", url: url, path: path, progress: !!onProgress }, cb)
+  // `data` (text) instead of a path: a snippet typed in, sent as UTF-8.
+  function postFile(url, path, cb, onProgress, data) {
+    var req = { op: "post_file", url: url, path: path, progress: !!onProgress }
+    if (typeof data === "string") req.data = data
+    var id = _request(req, cb)
     if (onProgress) root._progress[id] = onProgress
     return id
   }

@@ -161,7 +161,7 @@ BarWidget {
     ? Bar.reactionRows(root.slackState, root.previewRows, root.htmlColors, root.emojiPx, root.lang) : root.emptyRows
   // Threads you follow with new replies.
   readonly property var threads: root.showThreads && root.popupOpen && root.slackState
-    ? Bar.threadRows(root.slackState, root.previewRows, root.htmlColors, root.emojiPx) : root.emptyRows
+    ? Bar.threadRows(root.slackState, root.previewRows, root.previewMessages, root.htmlColors, root.emojiPx) : root.emptyRows
 
   // While the card is open, the conversations it lists get their unread
   // messages, fetched again once their newest one moves.
@@ -1393,23 +1393,33 @@ BarWidget {
               elide: Text.ElideRight
             }
 
-            // Its latest new reply, up to two lines, word by word like the
+            // Its new replies, up to two lines each, word by word like the
             // conversations' messages.
-            Flow {
-              id: replyFlow
-              visible: threadRow.modelData.reply.length > 0
+            Column {
+              visible: threadRow.modelData.messages.length > 0
               x: threadRow.indent
               width: threadInner.width - x
-              height: visible ? Math.min(implicitHeight, Math.ceil(messageMetrics.height * 2)) : 0
-              clip: true
+              spacing: Style.space(2)
 
               Repeater {
-                model: threadRow.modelData.reply
+                model: threadRow.modelData.messages
 
-                Loader {
+                Flow {
+                  id: replyFlow
                   required property var modelData
-                  readonly property var token: modelData
-                  sourceComponent: modelData.kind === "img" ? messageEmoji : messageWord
+                  width: parent.width
+                  height: Math.min(implicitHeight, Math.ceil(messageMetrics.height * 2))
+                  clip: true
+
+                  Repeater {
+                    model: replyFlow.modelData.tokens
+
+                    Loader {
+                      required property var modelData
+                      readonly property var token: modelData
+                      sourceComponent: modelData.kind === "img" ? messageEmoji : messageWord
+                    }
+                  }
                 }
               }
             }
